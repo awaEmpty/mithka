@@ -1,5 +1,4 @@
 import 'dart:collection';
-
 import '../tdlib/td_models.dart';
 import 'chat_first_contact_info.dart';
 

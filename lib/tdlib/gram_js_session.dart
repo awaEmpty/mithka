@@ -9,7 +9,6 @@
 
 import 'dart:convert';
 import 'dart:typed_data';
-
 import 'td_session_string.dart';
 
 /// Endpoint a GramJS client dials for a Telegram DC.

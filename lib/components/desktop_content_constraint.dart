@@ -1,5 +1,4 @@
 import 'package:flutter/widgets.dart';
-
 import '../platform/adaptive_platform.dart';
 
 /// Width of the readable content lane on native desktop targets.

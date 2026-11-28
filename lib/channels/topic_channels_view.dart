@@ -8,11 +8,9 @@
 
 import 'dart:async';
 import 'dart:convert';
-
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-
 import '../app/app_navigator.dart';
 import '../app/bottom_bar_layout.dart';
 import '../chat/chat_view.dart';

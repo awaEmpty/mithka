@@ -1,11 +1,22 @@
 import 'dart:ui' as ui;
-
 import 'package:flutter/widgets.dart';
-
 import '../theme/app_motion.dart';
 import '../theme/app_theme.dart';
 
 const _indicatorWhite = Color(0xFFFFFFFF);
+
+/// Motion of the glass bar's selection.
+///
+/// The capsule and the picked glyph share one duration and curve so they
+/// settle together. A front-loaded curve (the dialog-oriented
+/// `AppMotion.emphasized` puts 70% of the distance into the first 6% of the
+/// time) made a five-tab jump read as a teleport: measured at 16 ms, the
+/// capsule had already crossed two thirds of the bar while the glyph was
+/// still growing. `standard` starts from rest and decelerates into the slot.
+Duration glassSelectionDuration(BuildContext context) =>
+    AppMotion.duration(context, AppMotion.deliberate);
+
+const Curve glassSelectionCurve = AppMotion.standard;
 
 /// The painted animated selection capsule for the non-iOS glass fallback.
 /// iOS draws its selected material natively in the same host as the outer glass;
@@ -30,8 +41,8 @@ class GlassSelectionIndicator extends StatelessWidget {
       builder: (context, constraints) => Stack(
         children: [
           AnimatedPositionedDirectional(
-            duration: AppMotion.duration(context, AppMotion.deliberate),
-            curve: AppMotion.emphasized,
+            duration: glassSelectionDuration(context),
+            curve: glassSelectionCurve,
             start: constraints.maxWidth * selection / itemCount,
             width: constraints.maxWidth / itemCount,
             top: 0,

@@ -1,10 +1,8 @@
 import 'dart:io';
 import 'dart:math' as math;
-
 import 'package:image/image.dart' as image_lib;
 import 'package:light_compressor_v2/light_compressor_v2.dart';
 import 'package:path_provider/path_provider.dart';
-
 import 'story_service.dart';
 
 class StoryVideoSegment {

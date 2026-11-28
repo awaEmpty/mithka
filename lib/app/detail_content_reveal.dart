@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-
 import '../theme/app_motion.dart';
 import '../theme/app_theme.dart';
 

@@ -1,5 +1,4 @@
 import 'package:flutter/widgets.dart';
-
 import 'app_icons.dart';
 
 enum DocumentFilePalette { blue, green, red, yellow }

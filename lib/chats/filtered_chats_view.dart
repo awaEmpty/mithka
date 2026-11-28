@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-
 import '../app/app_navigator.dart';
 import '../chat/chat_view.dart';
 import '../components/app_icons.dart';

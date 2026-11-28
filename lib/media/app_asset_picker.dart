@@ -1,14 +1,12 @@
 import 'dart:io';
 import 'dart:math' as math;
 import 'dart:typed_data';
-
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:mithka/l10n/app_localizations.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:provider/provider.dart';
 import 'package:wechat_assets_picker/wechat_assets_picker.dart';
-
 import '../components/app_icons.dart';
 import '../components/app_interactive_surface.dart';
 import '../platform/ohos_media_bridge.dart';

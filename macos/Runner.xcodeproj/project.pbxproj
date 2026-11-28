@@ -21,6 +21,7 @@
 /* End PBXAggregateTarget section */
 
 /* Begin PBXBuildFile section */
+		AF0EED1531E1000100000001 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = AF0EED1631E1000100000001 /* PrivacyInfo.xcprivacy */; };
 		331C80D8294CF71000263BE5 /* RunnerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 331C80D7294CF71000263BE5 /* RunnerTests.swift */; };
 		335BBD1B22A9A15E00E9071D /* GeneratedPluginRegistrant.swift in Sources */ = {isa = PBXBuildFile; fileRef = 335BBD1A22A9A15E00E9071D /* GeneratedPluginRegistrant.swift */; };
 		33CC10F12044A3C60003C045 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 33CC10F02044A3C60003C045 /* AppDelegate.swift */; };
@@ -70,6 +71,7 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		AF0EED1631E1000100000001 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; lastKnownFileType = text.xml; name = PrivacyInfo.xcprivacy; path = Runner/PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 		331C80D5294CF71000263BE5 /* RunnerTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = RunnerTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		331C80D7294CF71000263BE5 /* RunnerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RunnerTests.swift; sourceTree = "<group>"; };
 		333000ED22D3DE5D00554162 /* Warnings.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Warnings.xcconfig; sourceTree = "<group>"; };
@@ -82,8 +84,8 @@
 		33CC11122044BFA00003C045 /* MainFlutterWindow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MainFlutterWindow.swift; sourceTree = "<group>"; };
 		A17D0FF731E1000100000001 /* MacOSAppIconPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacOSAppIconPlugin.swift; sourceTree = "<group>"; };
 		A17D0FFB31E1000100000001 /* ExternalLinksPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExternalLinksPlugin.swift; sourceTree = "<group>"; };
-		AF0EED1431E1000100000001 /* AirDeviceProof.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AirDeviceProof.swift; sourceTree = "<group>"; };
-		AF0EED1231E1000100000001 /* AirCrashReports.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AirCrashReports.swift; sourceTree = "<group>"; };
+		AF0EED1431E1000100000001 /* AirDeviceProof.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; name = AirDeviceProof.swift; path = ../../apple/AirDeviceProof.swift; sourceTree = "<group>"; };
+		AF0EED1231E1000100000001 /* AirCrashReports.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; name = AirCrashReports.swift; path = ../../apple/AirCrashReports.swift; sourceTree = "<group>"; };
 		A17D0FF231E1000100000001 /* HandoffBridge.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; name = HandoffBridge.swift; path = ../../apple/HandoffBridge.swift; sourceTree = "<group>"; };
 		A17D0FF831E1000100000001 /* WebProxyBridge.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; name = WebProxyBridge.swift; path = ../../apple/WebProxyBridge.swift; sourceTree = "<group>"; };
 		A17D0FF531E1000100000001 /* Pengram.icon */ = {isa = PBXFileReference; lastKnownFileType = folder.iconcomposer.icon; name = Pengram.icon; path = ../ios/Runner/Pengram.icon; sourceTree = SOURCE_ROOT; };
@@ -174,6 +176,7 @@
 				A17D0FF531E1000100000001 /* Pengram.icon */,
 				33CC10F42044A3C60003C045 /* MainMenu.xib */,
 				33CC10F72044A3C60003C045 /* Info.plist */,
+				AF0EED1631E1000100000001 /* PrivacyInfo.xcprivacy */,
 			);
 			name = Resources;
 			path = ..;
@@ -263,6 +266,7 @@
 				33CC10E92044A3C60003C045 /* Sources */,
 				33CC10EA2044A3C60003C045 /* Frameworks */,
 				33CC10EB2044A3C60003C045 /* Resources */,
+				A40D2E8C2F3326A000D1B003 /* Keep small legacy icon fallbacks */,
 				33CC110E2044A8840003C045 /* Bundle Framework */,
 				3399D490228B24CF009A79C7 /* ShellScript */,
 				A40D2E8A2F3326A000D1B001 /* Embed macOS TDLib */,
@@ -351,12 +355,34 @@
 				33CC10F32044A3C60003C045 /* Assets.xcassets in Resources */,
 				A17D0FF431E1000100000001 /* Pengram.icon in Resources */,
 				33CC10F62044A3C60003C045 /* MainMenu.xib in Resources */,
+				AF0EED1531E1000100000001 /* PrivacyInfo.xcprivacy in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXShellScriptBuildPhase section */
+		A40D2E8C2F3326A000D1B003 /* Keep small legacy icon fallbacks */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputPaths = (
+				"$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/Pengram.icns",
+				"$(SRCROOT)/../scripts/macos-small-icon-fallback.py",
+				"$(SRCROOT)/Runner/Assets.xcassets/AppIcon.appiconset/app_icon_16.png",
+				"$(SRCROOT)/Runner/Assets.xcassets/AppIcon.appiconset/app_icon_32.png",
+				"$(SRCROOT)/Runner/Assets.xcassets/AppIcon.appiconset/app_icon_64.png",
+			);
+			name = "Keep small legacy icon fallbacks";
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "set -eu\npython3 \"$SRCROOT/../scripts/macos-small-icon-fallback.py\" \"$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH/Pengram.icns\" \"$SRCROOT/Runner/Assets.xcassets/AppIcon.appiconset\"\n";
+			showEnvVarsInLog = 0;
+		};
 		3399D490228B24CF009A79C7 /* ShellScript */ = {
 			isa = PBXShellScriptBuildPhase;
 			alwaysOutOfDate = 1;
@@ -562,10 +588,10 @@
 				CURRENT_PROJECT_VERSION = 1;
 				GENERATE_INFOPLIST_FILE = YES;
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = ad.neko.mithka.RunnerTests;
+				PRODUCT_BUNDLE_IDENTIFIER = x.empty.mithka.RunnerTests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_VERSION = 5.0;
-				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Mithka.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Mithka";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Mithka X.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Mithka";
 			};
 			name = Debug;
 		};
@@ -577,10 +603,10 @@
 				CURRENT_PROJECT_VERSION = 1;
 				GENERATE_INFOPLIST_FILE = YES;
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = ad.neko.mithka.RunnerTests;
+				PRODUCT_BUNDLE_IDENTIFIER = x.empty.mithka.RunnerTests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_VERSION = 5.0;
-				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Mithka.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Mithka";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Mithka X.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Mithka";
 			};
 			name = Release;
 		};
@@ -592,10 +618,10 @@
 				CURRENT_PROJECT_VERSION = 1;
 				GENERATE_INFOPLIST_FILE = YES;
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = ad.neko.mithka.RunnerTests;
+				PRODUCT_BUNDLE_IDENTIFIER = x.empty.mithka.RunnerTests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_VERSION = 5.0;
-				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Mithka.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Mithka";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Mithka X.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Mithka";
 			};
 			name = Profile;
 		};
@@ -662,7 +688,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = ad.neko.mithka;
+				PRODUCT_BUNDLE_IDENTIFIER = x.empty.mithka;
 				PROVISIONING_PROFILE_SPECIFIER = "";
 				SWIFT_VERSION = 5.0;
 			};
@@ -795,7 +821,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = ad.neko.mithka;
+				PRODUCT_BUNDLE_IDENTIFIER = x.empty.mithka;
 				PROVISIONING_PROFILE_SPECIFIER = "";
 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
 				SWIFT_VERSION = 5.0;
@@ -816,7 +842,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = ad.neko.mithka;
+				PRODUCT_BUNDLE_IDENTIFIER = x.empty.mithka;
 				PROVISIONING_PROFILE_SPECIFIER = "";
 				SWIFT_VERSION = 5.0;
 			};

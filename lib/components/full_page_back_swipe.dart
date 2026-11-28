@@ -1,7 +1,7 @@
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart' show Theme;
+import 'package:flutter/rendering.dart';
 import 'package:flutter/widgets.dart';
-
 import '../platform/adaptive_platform.dart';
 
 /// A route-owned animation driver for [FullPageBackSwipe].
@@ -21,11 +21,76 @@ abstract interface class FullPageBackSwipeDriver {
   void commitFullPageBackSwipe(VoidCallback? beforePop);
 }
 
+/// Which pointer the page's back swipe currently owns.
+///
+/// The back swipe is a raw pointer listener, while a message row's reply drag
+/// is an arena gesture. The arena cannot arbitrate between them, so a swipe
+/// that peels the page to the right and is then reversed would ALSO drag the
+/// row left into a reply. While this claim is set, row-level reply drags must
+/// ignore the contact (and cancel any travel they already have).
+///
+/// One process has at most one page gesture in flight, so a static is enough;
+/// it is cleared on every pointer up/cancel and on dispose.
+abstract final class FullPageBackSwipeClaim {
+  static bool _active = false;
+
+  static bool get active => _active;
+
+  static void begin() => _active = true;
+
+  static void clear() => _active = false;
+}
+
+/// The mirror of [FullPageBackSwipeClaim]: while a transcript row is following
+/// the finger as a swipe-to-reply drag, the page must not arm its back gesture
+/// on the same contact.
+///
+/// A reply drag starts leftward and is often reversed back to the right to
+/// cancel it. The page listener sees that rightward half as a back swipe and
+/// would peel the chat while the row springs home. The row claims the contact
+/// for the whole gesture instead, so the page ignores it from the first move
+/// to the pointer up.
+abstract final class MessageReplySwipeClaim {
+  static bool _active = false;
+
+  static bool get active => _active;
+
+  static void begin() => _active = true;
+
+  static void clear() => _active = false;
+}
+
+/// Marks a subtree that owns horizontal drags, such as a horizontally
+/// scrollable strip: the full-page back swipe ignores pointers that land
+/// inside it.
+///
+/// The back swipe is a raw pointer listener, so it never loses a gesture
+/// arena to a nested control. Without this marker a rightward drag that
+/// scrolls a strip back (the topic tabs above all) also starts the page's
+/// back gesture and pops the chat. Layout and painting are untouched: the
+/// marker only adds itself to the hit-test path.
+class ExcludeFromBackSwipe extends SingleChildRenderObjectWidget {
+  const ExcludeFromBackSwipe({super.key, super.child});
+
+  @override
+  RenderObject createRenderObject(BuildContext context) =>
+      _RenderExcludeFromBackSwipe();
+}
+
+class _RenderExcludeFromBackSwipe extends RenderProxyBox {
+  // Opaque to the hit test even over a transparent gap between the strip's
+  // items: the whole bar belongs to the strip, not only the painted tabs.
+  @override
+  bool hitTestSelf(Offset position) => true;
+}
+
 /// Observes a rightward back swipe from anywhere inside [child].
 ///
 /// A raw pointer listener is intentional: nested horizontal controls can keep
 /// handling their own gestures while the page still observes the navigation
-/// gesture.
+/// gesture. Controls that must not share the drag — horizontally scrollable
+/// surfaces and anything marked with [ExcludeFromBackSwipe] — are excluded at
+/// pointer-down, because a raw listener cannot be cancelled by the arena.
 class FullPageBackSwipe extends StatefulWidget {
   const FullPageBackSwipe({
     super.key,
@@ -59,6 +124,7 @@ class _FullPageBackSwipeState extends State<FullPageBackSwipe> {
   double _dy = 0;
   VelocityTracker? _velocity;
   bool _horizontalIntent = false;
+  bool _ownsBackSwipeClaim = false;
   FullPageBackSwipeDriver? _driver;
   bool _routeDriverDetected = false;
 
@@ -81,14 +147,37 @@ class _FullPageBackSwipeState extends State<FullPageBackSwipe> {
         (event.kind == PointerDeviceKind.mouse ||
             event.kind == PointerDeviceKind.trackpad);
     if (desktopPointer) return;
+    // The drag belongs to the control under the finger when that control
+    // scrolls horizontally (the topic tab strip above all): a rightward swipe
+    // there is "scroll back to earlier tabs", not "leave the chat".
+    if (_ownsHorizontalDragAt(event.position, event.viewId)) return;
     _pointer = event.pointer;
     _velocity = VelocityTracker.withKind(event.kind)
       ..addPosition(event.timeStamp, event.position);
   }
 
+  /// True when the pointer landed on a horizontally scrollable surface or on a
+  /// subtree marked [ExcludeFromBackSwipe].
+  bool _ownsHorizontalDragAt(Offset position, int viewId) {
+    final result = HitTestResult();
+    RendererBinding.instance.hitTestInView(result, position, viewId);
+    for (final entry in result.path) {
+      final target = entry.target;
+      if (target is _RenderExcludeFromBackSwipe) return true;
+      if (target is RenderViewportBase && target.axis == Axis.horizontal) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   void _update(PointerMoveEvent event) {
     final tracker = _velocity;
     if (tracker == null || event.pointer != _pointer || !widget.enabled) return;
+    // A row that is already following the finger as a reply drag owns this
+    // contact; dragging back to the right cancels that reply, it does not
+    // start the page gesture on top of it.
+    if (MessageReplySwipeClaim.active) return;
     _dx += event.delta.dx;
     _dy += event.delta.dy;
     tracker.addPosition(event.timeStamp, event.position);
@@ -96,6 +185,10 @@ class _FullPageBackSwipeState extends State<FullPageBackSwipe> {
         _dx > _intentDistance &&
         _dx.abs() > _dy.abs() * 1.45) {
       _horizontalIntent = true;
+      // The page now owns this contact: a nested reply drag must not follow
+      // the same finger when the swipe is reversed (see [FullPageBackSwipeClaim]).
+      _ownsBackSwipeClaim = true;
+      FullPageBackSwipeClaim.begin();
       final route = ModalRoute.of(context);
       final driver = route is FullPageBackSwipeDriver
           ? route as FullPageBackSwipeDriver
@@ -120,6 +213,9 @@ class _FullPageBackSwipeState extends State<FullPageBackSwipe> {
     final horizontal = _dx.abs() > _dy.abs() * 1.65;
     final shouldPop =
         widget.enabled &&
+        // Without an armed intent the page never took this contact — a reply
+        // drag that was reversed and released must not pop the chat.
+        _horizontalIntent &&
         horizontal &&
         _dx > _commitDistance &&
         (velocity > _fastCommitVelocity || _dx > _longCommitDistance);
@@ -152,11 +248,19 @@ class _FullPageBackSwipeState extends State<FullPageBackSwipe> {
     _horizontalIntent = false;
     _driver = null;
     _routeDriverDetected = false;
+    if (_ownsBackSwipeClaim) {
+      _ownsBackSwipeClaim = false;
+      FullPageBackSwipeClaim.clear();
+    }
   }
 
   @override
   void dispose() {
     _driver?.cancelFullPageBackSwipe();
+    if (_ownsBackSwipeClaim) {
+      _ownsBackSwipeClaim = false;
+      FullPageBackSwipeClaim.clear();
+    }
     super.dispose();
   }
 

@@ -1,9 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
-
 import 'package:http/http.dart' as http;
-
 import '../tdlib/json_helpers.dart' show jsonInt;
 import 'bot_api_account.dart';
 

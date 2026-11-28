@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Cold-start splash artwork: the app mark, centered on the launch
+     background colour at a comfortable size. Shared by the legacy
+     windowBackground drawable (API < 31) and referenced from every
+     LaunchTheme; on Android 12+ the system splash uses the same artwork
+     through windowSplashScreenAnimatedIcon, so the mark shows regardless of
+     which launcher icon is active. The drawable is baked per appearance
+     (drawable-* carries ink, drawable-night-* white) because a bitmap cannot
+     be tinted by the launch colour. -->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:drawable="@color/launch_background" />
+    <item android:gravity="center">
+        <bitmap android:src="@drawable/penguin_launch"
+            android:gravity="center" />
+    </item>
+</layer-list>

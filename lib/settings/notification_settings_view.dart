@@ -6,10 +6,8 @@
 //
 
 import 'dart:async';
-
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-
 import '../app/primary_chat_launcher.dart';
 import '../auth/account_store.dart';
 import '../components/app_icons.dart';
@@ -25,6 +23,7 @@ import '../tdlib/td_client.dart';
 import '../theme/app_motion.dart';
 import '../theme/app_theme.dart';
 import 'notification_exceptions_sheet.dart';
+import 'push_service_section.dart';
 
 class NotificationSettingsView extends StatefulWidget {
   const NotificationSettingsView({super.key, this.showBackButton = true});
@@ -480,6 +479,8 @@ class _NotificationSettingsViewState extends State<NotificationSettingsView> {
               AppStringKeys.notificationNamesOnLockScreenDescription,
             ),
           ),
+          if (Theme.of(context).platform == TargetPlatform.android)
+            const PushServiceSection(),
         ],
       ),
     );

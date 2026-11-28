@@ -1,8 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
-
 import 'package:sqlite3/sqlite3.dart';
-
 import '../tdlib/json_helpers.dart' show jsonInt;
 
 class BotApiFileRecord {

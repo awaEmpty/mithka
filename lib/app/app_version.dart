@@ -33,7 +33,9 @@ class AppVersion {
     return AppVersion(
       version: info.version,
       buildNumber: _ciBuildStamp.isEmpty ? info.buildNumber : _ciBuildStamp,
-      commit: _commit.isEmpty ? 'local' : _commit,
+      // A build without a stamped commit shows the version alone; "local" is a
+      // build-environment word, not part of the app's identity.
+      commit: _commit,
     );
   }
 }

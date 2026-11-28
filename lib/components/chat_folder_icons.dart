@@ -1,7 +1,5 @@
 import 'dart:math' as math;
-
 import 'package:flutter/widgets.dart';
-
 import '../theme/app_theme.dart';
 import 'app_icons.dart';
 

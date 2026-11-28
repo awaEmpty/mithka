@@ -7,7 +7,6 @@
 //
 
 import 'package:flutter/material.dart';
-
 import '../components/app_icons.dart';
 import '../components/app_interactive_surface.dart';
 import '../components/photo_avatar.dart';
@@ -15,7 +14,7 @@ import '../components/ui_components.dart';
 import '../l10n/app_localizations.dart';
 import '../theme/app_motion.dart';
 import '../theme/app_theme.dart';
-import 'chat_info_view.dart';
+import 'admin/chat_info_view.dart';
 
 /// Read-only group context intended for the trailing pane in a wide chat.
 ///
@@ -89,6 +88,7 @@ class _DesktopChatContextPaneState extends State<DesktopChatContextPane> {
         pageBuilder: (_, _, _) => GroupAnnouncementView(
           announcement: _viewModel.description,
           entities: _viewModel.descriptionEntities,
+          isChannel: _viewModel.isChannel,
         ),
       ),
     );
@@ -139,6 +139,7 @@ class _DesktopChatContextPaneBody extends StatelessWidget {
           _AnnouncementSection(
             announcement: viewModel.description,
             onTap: onOpenAnnouncement,
+            isChannel: viewModel.isChannel,
           ),
           Divider(height: 1, thickness: 1, color: c.divider),
           Expanded(
@@ -147,6 +148,7 @@ class _DesktopChatContextPaneBody extends StatelessWidget {
               members: viewModel.members,
               onOpenMembers: onOpenMembers,
               onOpenMember: onOpenMember,
+              isChannel: viewModel.isChannel,
             ),
           ),
         ],
@@ -156,10 +158,15 @@ class _DesktopChatContextPaneBody extends StatelessWidget {
 }
 
 class _AnnouncementSection extends StatelessWidget {
-  const _AnnouncementSection({required this.announcement, required this.onTap});
+  const _AnnouncementSection({
+    required this.announcement,
+    required this.onTap,
+    this.isChannel = false,
+  });
 
   final String announcement;
   final VoidCallback onTap;
+  final bool isChannel;
 
   @override
   Widget build(BuildContext context) {
@@ -167,7 +174,11 @@ class _AnnouncementSection extends StatelessWidget {
     final empty = announcement.trim().isEmpty;
     return AppInteractiveSurface(
       key: const ValueKey('desktopChatContextAnnouncement'),
-      semanticLabel: AppStringKeys.chatInfoGroupAnnouncement.l10n(context),
+      semanticLabel:
+          (isChannel
+                  ? AppStringKeys.chatInfoChannelAnnouncement
+                  : AppStringKeys.chatInfoGroupAnnouncement)
+              .l10n(context),
       onTap: onTap,
       child: Padding(
         padding: const EdgeInsets.all(AppSpacing.xxl),
@@ -178,7 +189,10 @@ class _AnnouncementSection extends StatelessWidget {
               children: [
                 Expanded(
                   child: Text(
-                    AppStringKeys.chatInfoGroupAnnouncement.l10n(context),
+                    (isChannel
+                            ? AppStringKeys.chatInfoChannelAnnouncement
+                            : AppStringKeys.chatInfoGroupAnnouncement)
+                        .l10n(context),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: AppTextStyle.callout(
@@ -198,7 +212,10 @@ class _AnnouncementSection extends StatelessWidget {
             const SizedBox(height: AppSpacing.md),
             Text(
               empty
-                  ? AppStringKeys.chatInfoGroupAnnouncementEmpty.l10n(context)
+                  ? (isChannel
+                            ? AppStringKeys.chatInfoChannelAnnouncementEmpty
+                            : AppStringKeys.chatInfoGroupAnnouncementEmpty)
+                        .l10n(context)
                   : announcement,
               maxLines: 4,
               overflow: TextOverflow.ellipsis,
@@ -219,12 +236,14 @@ class _MemberSection extends StatefulWidget {
     required this.members,
     required this.onOpenMembers,
     required this.onOpenMember,
+    this.isChannel = false,
   });
 
   final int memberCount;
   final List<ChatMember> members;
   final VoidCallback? onOpenMembers;
   final ValueChanged<ChatMember>? onOpenMember;
+  final bool isChannel;
 
   @override
   State<_MemberSection> createState() => _MemberSectionState();
@@ -302,7 +321,7 @@ class _MemberSectionState extends State<_MemberSection> {
                           child: Align(
                             alignment: Alignment.centerLeft,
                             child: Text(
-                              '${AppStringKeys.chatInfoGroupMembers.l10n(context)} '
+                              '${(widget.isChannel ? AppStringKeys.topicChatChannelMembers : AppStringKeys.chatInfoGroupMembers).l10n(context)} '
                               '$resolvedCount',
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,

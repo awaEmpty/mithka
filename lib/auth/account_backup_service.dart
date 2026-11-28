@@ -1,9 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
-
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-
 import '../platform/ohos_support.dart';
 import '../tdlib/gram_js_session.dart';
 import '../tdlib/json_helpers.dart';

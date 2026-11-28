@@ -103,6 +103,9 @@ List<ChatMessage> mergeChatMessages(
     final existing = byId[message.id];
     if (existing != null) {
       message.isSendAcknowledged = existing.isSendAcknowledged;
+      if (message.localEchoId == 0) {
+        message.localEchoId = existing.localEchoId;
+      }
       message.senderName ??= existing.senderName;
       message.senderIsChat = message.senderIsChat || existing.senderIsChat;
       message.senderPhoto ??= existing.senderPhoto;

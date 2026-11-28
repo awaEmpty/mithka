@@ -57,7 +57,7 @@ python3 "$repository_root/scripts/prune-desktop-bundle.py" linux "$appdir/usr/bi
 rm -f "$appdir/usr/lib/libmdk-rockchip.so"
 install -m 0644 \
   "$repository_root/macos/Runner/Assets.xcassets/AppIcon.appiconset/app_icon_512.png" \
-  "$work/ad.neko.mithka.png"
+  "$work/x.empty.mithka.png"
 
 tool="$work/linuxdeploy-$appimage_arch.AppImage"
 curl --fail --location --retry 3 \
@@ -85,8 +85,8 @@ export DEPLOY_GTK_VERSION=3
 export LD_LIBRARY_PATH="$appdir/usr/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 "$tool" --appdir "$appdir" --executable "$appdir/usr/bin/mithka" \
   "${libraries[@]}" --plugin gtk \
-  --desktop-file "$repository_root/linux/appimage/ad.neko.mithka.desktop" \
-  --icon-file "$work/ad.neko.mithka.png" \
+  --desktop-file "$repository_root/linux/appimage/x.empty.mithka.desktop" \
+  --icon-file "$work/x.empty.mithka.png" \
   --custom-apprun "$repository_root/linux/appimage/AppRun" --output appimage
 test -s "$output"
 chmod 0755 "$output"

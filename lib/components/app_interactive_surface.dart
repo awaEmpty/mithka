@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-
 import '../theme/app_motion.dart';
 import '../theme/app_theme.dart';
 import 'app_press_ripple.dart';

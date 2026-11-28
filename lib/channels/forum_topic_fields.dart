@@ -7,7 +7,6 @@
 //
 
 import 'package:flutter/widgets.dart';
-
 import '../tdlib/json_helpers.dart';
 
 int? forumTopicId(TdObject topic, TdObject info) =>

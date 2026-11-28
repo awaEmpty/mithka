@@ -1,8 +1,6 @@
 import 'dart:math' as math;
-
 import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
-
 import '../platform/adaptive_platform.dart';
 
 export '../platform/adaptive_platform.dart' show isDesktopTargetPlatform;

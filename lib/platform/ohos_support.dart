@@ -5,14 +5,12 @@
 //
 
 import 'dart:io';
-
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_sound_platform_interface/flutter_sound_player_platform_interface.dart';
 import 'package:flutter_sound_platform_interface/flutter_sound_recorder_platform_interface.dart';
 import 'package:image_picker_platform_interface/image_picker_platform_interface.dart';
 import 'package:permission_handler_platform_interface/permission_handler_platform_interface.dart';
-
 import 'ohos_media_bridge.dart';
 
 /// Whether [operatingSystem] names HarmonyOS.

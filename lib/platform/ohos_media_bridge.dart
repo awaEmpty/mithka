@@ -15,7 +15,6 @@
 
 import 'dart:async';
 import 'dart:math' as math;
-
 import 'package:flutter/services.dart';
 import 'package:flutter_sound/flutter_sound.dart' show PlayerState;
 import 'package:flutter_sound_platform_interface/flutter_sound_platform_interface.dart';

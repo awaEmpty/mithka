@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="push_keepalive_channel">后台连接</string>
+    <string name="push_keepalive_channel_quiet">后台连接（静默）</string>
+    <string name="push_keepalive_text">正在保持 Telegram 连接</string>
+    <string name="push_fallback_channel">消息</string>
+    <string name="push_fallback_new_message">新消息</string>
+    <string name="push_fallback_photo">照片</string>
+    <string name="push_fallback_video">视频</string>
+    <string name="push_fallback_voice">语音消息</string>
+    <string name="push_fallback_audio">音频</string>
+    <string name="push_fallback_sticker">贴纸</string>
+    <string name="push_fallback_gif">GIF</string>
+    <string name="push_fallback_file">文件</string>
+    <string name="push_fallback_location">位置</string>
+    <string name="push_fallback_contact">联系人</string>
+    <string name="push_fallback_poll">投票</string>
+    <string name="push_fallback_gift">礼物</string>
+</resources>

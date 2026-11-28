@@ -1,10 +1,8 @@
 import 'dart:async';
 import 'dart:ui' as ui;
-
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
-
 import '../components/app_icons.dart';
 
 /// A logical app tab, not a Flutter control painted over UIKit.

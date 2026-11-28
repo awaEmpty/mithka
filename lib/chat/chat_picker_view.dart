@@ -3,32 +3,30 @@
 //
 //  A searchable chat chooser. Pushed when the user forwards a message or shares
 //  content; returns the picked `ChatSummary` via Navigator.pop. Reuses
-//  `ChatListViewModel` so it shows the same live, sorted chat list as 消息.
+//  `ChatListViewModel` so it shows the same live, sorted chat list as 消息 —
+//  folder tabs included, like the reference client's forward picker.
 //
 
 import 'package:flutter/material.dart';
 import 'package:mithka/l10n/app_localizations.dart';
 import 'package:provider/provider.dart';
-
 import '../app/ipad_window_chrome.dart';
 import '../chats/chat_list_view_model.dart';
 import '../components/app_icons.dart';
+import '../components/chat_folder_icons.dart';
 import '../components/photo_avatar.dart';
 import '../contacts/contact_users.dart';
 import '../tdlib/td_client.dart';
 import '../tdlib/td_models.dart';
 import '../theme/app_theme.dart';
 import '../theme/theme_controller.dart';
-import 'forward_markdown.dart';
-import 'forward_options.dart';
-import 'internal_chat_link_router.dart';
-import 'telegram_link.dart';
+import 'links_search/internal_chat_link_router.dart';
+import 'links_search/telegram_link.dart';
 
 class ChatPickerResult {
-  const ChatPickerResult({required this.chat, required this.forwardOptions});
+  const ChatPickerResult({required this.chat});
 
   final ChatSummary chat;
-  final ForwardOptions forwardOptions;
 }
 
 class ChatPickerView extends StatefulWidget {
@@ -36,7 +34,7 @@ class ChatPickerView extends StatefulWidget {
     super.key,
     this.title = AppStringKeys.chatPickerChooseChat,
     this.showForwardOptions = false,
-    this.markdownOffer = const ForwardMarkdownOffer.none(),
+    this.showFolders,
     this.allowChannels = true,
     this.allowedKinds,
     this.allowedChatIds,
@@ -45,11 +43,16 @@ class ChatPickerView extends StatefulWidget {
     this.accountSlot,
   });
   final String title;
+
+  /// Forwarding entries route the picker's result through
+  /// [ChatPickerResult]; other callers receive the bare [ChatSummary].
   final bool showForwardOptions;
 
-  /// Markdown detected in the forwarded text: the picker offers a "render
-  /// Markdown" chip, pre-checked only when the offer is strong.
-  final ForwardMarkdownOffer markdownOffer;
+  /// Whether the account's chat folders are offered as tabs above the list, so
+  /// a destination can be found inside one folder instead of the whole account.
+  /// Null follows [showForwardOptions]: every forward picker offers them, and
+  /// a picker that shares something else into a chat opts in.
+  final bool? showFolders;
   final bool allowChannels;
   final Set<ChatKind>? allowedKinds;
   final Set<int>? allowedChatIds;
@@ -79,12 +82,18 @@ class _ChatPickerViewState extends State<ChatPickerView> {
   late final int? _accountSlot;
   final TdClient _client = TdClient.shared;
   final _controller = TextEditingController();
+  final _listController = ScrollController();
   final List<Contact> _contacts = [];
   bool _contactsLoading = false;
+
+  /// A page of the selected list is on its way; an empty list is still
+  /// loading rather than empty.
+  bool _paging = false;
+
+  /// The chat count at the last page asked for on the list's behalf. A pass
+  /// that added no chat ends the run, so an exhausted list is not asked again.
+  int _autoPagedAt = -1;
   String _query = '';
-  bool _removeCaption = false;
-  bool _removeSender = false;
-  late bool _renderMarkdown = widget.markdownOffer.suggested;
 
   @override
   void initState() {
@@ -94,12 +103,15 @@ class _ChatPickerViewState extends State<ChatPickerView> {
         InternalChatLinkScope.targetOf(context)?.accountSlot;
     _vm = ChatListViewModel(accountSlot: _accountSlot);
     _vm.addListener(_onModel);
+    _listController.addListener(_onListScroll);
     _vm.onAppear();
     _loadContacts();
   }
 
   void _onModel() {
-    if (mounted) setState(() {});
+    if (!mounted) return;
+    setState(() {});
+    _schedulePageInIfShort();
   }
 
   @override
@@ -107,11 +119,76 @@ class _ChatPickerViewState extends State<ChatPickerView> {
     _vm.removeListener(_onModel);
     _vm.dispose();
     _controller.dispose();
+    _listController.dispose();
     super.dispose();
   }
 
+  /// The folder tabs appear once the account has a folder besides "All".
+  bool get _offersFolders =>
+      (widget.showFolders ?? widget.showForwardOptions) &&
+      _vm.filters.length > 1;
+
+  /// A folder is paged in as it is scrolled, like the chat list it mirrors, so
+  /// one larger than the first page still reaches its last chat.
+  void _onListScroll() {
+    if (!_listController.hasClients) return;
+    if (_listController.position.extentAfter < 600) _pageIn();
+  }
+
+  Future<void> _pageIn() async {
+    if (_paging) return;
+    _paging = true;
+    try {
+      await _vm.loadMoreChats();
+    } finally {
+      _paging = false;
+    }
+    if (!mounted) return;
+    setState(() {});
+    _schedulePageInIfShort();
+  }
+
+  /// Whether fewer than 600 px of rows wait below the viewport. A search or a
+  /// kind restriction can hide most of a page, leaving nothing to scroll and
+  /// so nothing to trigger the next one.
+  bool get _listIsShort {
+    if (!_listController.hasClients) return true;
+    final position = _listController.position;
+    return !position.hasContentDimensions || position.extentAfter < 600;
+  }
+
+  /// Keeps paging while the rows on screen stop short of the viewport, so a
+  /// search reaches chats beyond the pages already loaded.
+  void _schedulePageInIfShort() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || _paging || !_listIsShort) return;
+      final count = _vm.chats.length;
+      if (count == _autoPagedAt) return;
+      _autoPagedAt = count;
+      _pageIn();
+    });
+  }
+
+  void _selectFolder(ChatFilterOption filter) {
+    if (filter.folderId == _vm.selectedFilter.folderId) return;
+    _vm.selectFilter(filter);
+    if (_listController.hasClients) _listController.jumpTo(0);
+    // Joins the load the selection just started, so the folder reads as
+    // loading instead of empty until its first page lands.
+    _autoPagedAt = -1;
+    _pageIn();
+  }
+
+  /// The selected folder's own chats with the archive appended, exactly like
+  /// the reference client's forward picker.
+  List<ChatSummary> get _selectionChats =>
+      _vm.chatsForSelection(_vm.selectedFilter.folderId);
+
   List<_PickerEntry> get _filtered {
-    final chats = [..._vm.chats, ..._vm.archived];
+    // A folder's own list already carries its archived members. Contacts
+    // without a chat belong to no folder, so they are offered under "All" only.
+    final inFolder = !_vm.isAllFilter;
+    final chats = _selectionChats;
     final chatPeerUserIds = chats
         .map((chat) => chat.peerUserId)
         .whereType<int>()
@@ -122,7 +199,8 @@ class _ChatPickerViewState extends State<ChatPickerView> {
             (widget.allowedChatIds?.contains(chat.id) ?? true))
           _PickerEntry.chat(chat),
       for (final contact in _contacts)
-        if (widget.allowContacts &&
+        if (!inFolder &&
+            widget.allowContacts &&
             _allowsKind(ChatKind.privateChat) &&
             !chatPeerUserIds.contains(contact.id))
           _PickerEntry.contact(contact),
@@ -193,17 +271,7 @@ class _ChatPickerViewState extends State<ChatPickerView> {
 
   void _popPickedChat(ChatSummary chat) {
     if (widget.showForwardOptions) {
-      final renderMarkdown = widget.markdownOffer.available && _renderMarkdown;
-      Navigator.of(context).pop(
-        ChatPickerResult(
-          chat: chat,
-          forwardOptions: ForwardOptions(
-            removeCaption: _removeCaption,
-            removeSender: _removeSender,
-            richText: renderMarkdown,
-          ),
-        ),
-      );
+      Navigator.of(context).pop(ChatPickerResult(chat: chat));
     } else {
       Navigator.of(context).pop(chat);
     }
@@ -221,19 +289,31 @@ class _ChatPickerViewState extends State<ChatPickerView> {
       body: Column(
         children: [
           _header(),
+          if (_offersFolders) _folderTabs(),
           Expanded(
-            child: filtered.isEmpty && widget.emptyText != null
-                ? Center(
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 32),
-                      child: Text(
-                        widget.emptyText!,
-                        textAlign: TextAlign.center,
-                        style: TextStyle(fontSize: 15, color: c.textSecondary),
-                      ),
-                    ),
-                  )
+            child: filtered.isEmpty
+                // Nothing is said while a page or the contacts are still on
+                // their way: the list may be about to fill.
+                ? _vm.isInitialLoading || _paging || _contactsLoading
+                      ? const SizedBox.expand()
+                      : Center(
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 32),
+                            child: Text(
+                              widget.emptyText ??
+                                  AppStringKeys.chatsSearchNoResults.l10n(
+                                    context,
+                                  ),
+                              textAlign: TextAlign.center,
+                              style: TextStyle(
+                                fontSize: 15,
+                                color: c.textSecondary,
+                              ),
+                            ),
+                          ),
+                        )
                 : ListView.builder(
+                    controller: _listController,
                     padding: EdgeInsets.zero,
                     itemCount: filtered.length,
                     itemBuilder: (context, i) => _row(filtered[i]),
@@ -312,119 +392,104 @@ class _ChatPickerViewState extends State<ChatPickerView> {
                         border: InputBorder.none,
                         isCollapsed: true,
                       ),
-                      onChanged: (q) => setState(() => _query = q),
+                      onChanged: (q) {
+                        setState(() => _query = q);
+                        _schedulePageInIfShort();
+                      },
                     ),
                   ),
                 ],
               ),
             ),
           ),
-          if (widget.showForwardOptions) _forwardOptions(),
         ],
       ),
     );
   }
 
-  Widget _forwardOptions() {
+  Widget _folderTabs() {
     final c = context.colors;
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(14, 0, 14, 10),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-        decoration: BoxDecoration(
-          color: c.card,
-          borderRadius: BorderRadius.circular(AppRadius.control),
-          border: Border.all(color: c.divider, width: 0.5),
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Row(
-              children: [
-                Expanded(
-                  child: _forwardOption(
-                    label: AppStringKeys.chatForwardRemoveCaption,
-                    selected: _removeCaption,
-                    onTap: () {
-                      setState(() {
-                        _removeCaption = !_removeCaption;
-                        if (_removeCaption) _removeSender = true;
-                      });
-                    },
-                  ),
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: _forwardOption(
-                    label: AppStringKeys.chatForwardRemoveSender,
-                    selected: _removeSender,
-                    onTap: () {
-                      setState(() {
-                        _removeSender = !_removeSender;
-                        if (!_removeSender) _removeCaption = false;
-                      });
-                    },
-                  ),
-                ),
-              ],
-            ),
-            if (widget.markdownOffer.available) ...[
-              const SizedBox(height: 8),
-              _forwardOption(
-                label: AppStringKeys.chatForwardRenderMarkdown,
-                selected: _renderMarkdown,
-                onTap: () => setState(() => _renderMarkdown = !_renderMarkdown),
-              ),
-            ],
-          ],
-        ),
-      ),
+    final theme = context.watch<ThemeController>();
+    final showBadges = theme.showFolderUnreadBadges;
+    final badgeOverflow = theme.unreadBadgeOverflowMode;
+    final selectedFolderId = _vm.selectedFilter.folderId;
+    final tabHeight = AppMetric.rowExtentFor(
+      context,
+      base: 44,
+      lines: const [AppTextSize.callout],
     );
-  }
-
-  Widget _forwardOption({
-    required String label,
-    required bool selected,
-    required VoidCallback onTap,
-  }) {
-    final c = context.colors;
-    return GestureDetector(
-      behavior: HitTestBehavior.opaque,
-      onTap: onTap,
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Container(
-            width: 20,
-            height: 20,
-            decoration: BoxDecoration(
-              color: selected ? c.linkBlue : c.searchFill,
-              borderRadius: BorderRadius.circular(AppRadius.md),
-              border: Border.all(color: selected ? c.linkBlue : c.divider),
-            ),
-            child: selected
-                ? const AppIcon(
-                    HeroAppIcons.check,
-                    size: 14,
-                    color: Colors.white,
-                  )
-                : null,
-          ),
-          const SizedBox(width: 7),
-          Flexible(
-            child: Text(
-              label.l10n(context),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                color: c.textPrimary,
-                fontSize: 13,
-                fontWeight: FontWeight.w500,
+    return Container(
+      height: tabHeight,
+      decoration: BoxDecoration(
+        color: c.listHeaderTint,
+        border: Border(bottom: BorderSide(color: c.divider, width: 0.5)),
+      ),
+      child: ListView.separated(
+        scrollDirection: Axis.horizontal,
+        padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg),
+        itemCount: _vm.filters.length,
+        separatorBuilder: (_, _) => const SizedBox(width: 28),
+        itemBuilder: (context, index) {
+          final filter = _vm.filters[index];
+          final selected = filter.folderId == selectedFolderId;
+          return GestureDetector(
+            key: ValueKey('chat-picker-folder-${filter.folderId ?? 'all'}'),
+            behavior: HitTestBehavior.opaque,
+            onTap: () => _selectFolder(filter),
+            child: SizedBox(
+              height: tabHeight,
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.end,
+                children: [
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      ChatFolderIcon(
+                        filter.isAll ? 'All' : filter.iconName,
+                        size: 17,
+                        color: selected ? AppTheme.brand : c.textSecondary,
+                      ),
+                      const SizedBox(width: AppSpacing.xs + 1),
+                      ConstrainedBox(
+                        constraints: const BoxConstraints(maxWidth: 168),
+                        child: Text(
+                          filter.title.l10n(context),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: AppTextSize.callout,
+                            fontWeight: selected
+                                ? FontWeight.w600
+                                : FontWeight.w500,
+                            color: c.textPrimary,
+                          ),
+                        ),
+                      ),
+                      if (showBadges &&
+                          !filter.isAll &&
+                          filter.unreadChatCount > 0) ...[
+                        const SizedBox(width: 5),
+                        FolderUnreadBadge(
+                          label: badgeOverflow.format(filter.unreadChatCount),
+                          accent: filter.hasUnmutedUnread,
+                        ),
+                      ],
+                    ],
+                  ),
+                  const SizedBox(height: 7),
+                  Container(
+                    width: 38,
+                    height: 4,
+                    decoration: BoxDecoration(
+                      color: AppTheme.brand.withValues(alpha: selected ? 1 : 0),
+                      borderRadius: BorderRadius.circular(AppRadius.sm),
+                    ),
+                  ),
+                ],
               ),
             ),
-          ),
-        ],
+          );
+        },
       ),
     );
   }

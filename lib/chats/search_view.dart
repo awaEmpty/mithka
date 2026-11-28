@@ -7,20 +7,21 @@
 //
 
 import 'dart:async';
-
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/services.dart';
 import 'package:mithka/l10n/app_localizations.dart';
-
+import 'package:provider/provider.dart';
 import '../app/active_conversation.dart';
 import '../app/app_navigator.dart';
 import '../app/ipad_window_chrome.dart';
 import '../app/primary_chat_launcher.dart';
-import '../chat/chat_search_query.dart';
-import '../chat/chat_search_view.dart';
-import '../chat/telegram_link.dart';
-import '../chat/telegram_mini_app_recents.dart';
-import '../chat/telegram_mini_app_view.dart';
+import '../auth/account_store.dart';
+import '../chat/links_search/chat_search_query.dart';
+import '../chat/links_search/chat_search_view.dart';
+import '../chat/links_search/telegram_link.dart';
+import '../chat/mini_apps/telegram_mini_app_recents.dart';
+import '../chat/mini_apps/telegram_mini_app_view.dart';
+import '../components/app_confirm_dialog.dart';
 import '../components/app_icons.dart';
 import '../components/app_interactive_surface.dart';
 import '../components/photo_avatar.dart';
@@ -38,6 +39,7 @@ import '../theme/date_text.dart';
 import 'chat_row_view.dart';
 import 'mini_apps_page.dart';
 import 'public_discovery_view.dart';
+import 'search_history_store.dart';
 import 'search_token_suggestions.dart';
 import 'search_token_views.dart';
 
@@ -1112,6 +1114,7 @@ class DesktopInlineSearchPanel extends StatelessWidget {
                   host,
                   hit,
                   onOpenTelegramLink: onOpenTelegramLink,
+                  onChatOpened: (chatId) => _recordSearchHistory(host, chatId),
                 ),
               );
             },
@@ -1471,53 +1474,15 @@ class _DesktopCompactSearchThumb extends StatelessWidget {
   final _SearchHit hit;
 
   @override
-  Widget build(BuildContext context) {
-    final image = hit.thumbnail ?? hit.photo;
-    if (hit.chat != null || hit.userId != null && hit.message == null) {
-      return PhotoAvatar(title: hit.title, photo: hit.photo, size: 40);
-    }
-    if (image != null) {
-      return ClipRRect(
-        borderRadius: BorderRadius.circular(AppRadius.control),
-        child: SizedBox.square(
-          dimension: 40,
-          child: Stack(
-            fit: StackFit.expand,
-            children: [
-              TDImage(photo: image),
-              if (hit.message?.video != null)
-                Center(
-                  child: Container(
-                    width: 22,
-                    height: 22,
-                    alignment: Alignment.center,
-                    decoration: BoxDecoration(
-                      color: const Color(0xFF000000).withValues(alpha: 0.50),
-                      shape: BoxShape.circle,
-                    ),
-                    child: const AppIcon(
-                      HeroAppIcons.play,
-                      size: 11,
-                      color: Color(0xFFFFFFFF),
-                    ),
-                  ),
-                ),
-            ],
-          ),
-        ),
-      );
-    }
-    return Container(
-      width: 40,
-      height: 40,
-      alignment: Alignment.center,
-      decoration: BoxDecoration(
-        color: hit.tint.withValues(alpha: 0.14),
-        borderRadius: BorderRadius.circular(AppRadius.control),
-      ),
-      child: AppIcon(hit.icon, size: 20, color: hit.tint),
-    );
-  }
+  Widget build(BuildContext context) => SearchHitLeadingImage(
+    title: hit.avatarTitle,
+    isPeer: hit.isPeerResult,
+    size: 40,
+    photo: hit.photo,
+    media: hit.media,
+    icon: hit.icon,
+    tint: hit.tint,
+  );
 }
 
 class SearchView extends StatefulWidget {
@@ -1526,6 +1491,7 @@ class SearchView extends StatefulWidget {
     this.initialQuery = '',
     this.initialTab,
     this.showBackButton = true,
+    this.historyStore,
   });
 
   final String initialQuery;
@@ -1535,6 +1501,9 @@ class SearchView extends StatefulWidget {
   final SearchTab? initialTab;
   final bool showBackButton;
 
+  /// Injectable for tests; defaults to the shared store.
+  final SearchHistoryStore? historyStore;
+
   @override
   State<SearchView> createState() => _SearchViewState();
 }
@@ -1543,9 +1512,23 @@ class _SearchViewState extends State<SearchView> {
   late final TextEditingController _controller;
   final _focus = FocusNode();
   final _vm = _SearchViewModel();
+  late final SearchHistoryStore _history =
+      widget.historyStore ?? SearchHistoryStore.shared;
   late SearchTab _tab = widget.initialTab ?? SearchTab.chats;
   late String _query;
   Timer? _searchDebounce;
+
+  /// The active account's searched chats, newest first, resolved into rows.
+  ///
+  /// Ids are the store's truth; the summaries are only this screen's cache —
+  /// a chat that cannot be resolved (left, deleted) drops its row while the
+  /// id stays in the history, exactly like a dialog the reference can no
+  /// longer load.
+  List<ChatSummary> _recentChats = const [];
+  final Map<int, ChatSummary> _recentChatCache = {};
+  bool _historyLoaded = false;
+  int? _historyUserId;
+  int _historyGeneration = 0;
 
   @override
   void initState() {
@@ -1554,6 +1537,8 @@ class _SearchViewState extends State<SearchView> {
     _controller = TextEditingController(text: _query);
     _vm.addListener(() => setState(() {}));
     _vm.search(_query, _tab);
+    _history.addListener(_handleHistoryChanged);
+    unawaited(_loadHistory());
     WidgetsBinding.instance.addPostFrameCallback((_) {
       Future.delayed(const Duration(milliseconds: 250), () {
         if (mounted) _focus.requestFocus();
@@ -1564,10 +1549,146 @@ class _SearchViewState extends State<SearchView> {
   @override
   void dispose() {
     _searchDebounce?.cancel();
+    _history.removeListener(_handleHistoryChanged);
     _controller.dispose();
     _focus.dispose();
     _vm.dispose();
     super.dispose();
+  }
+
+  /// The account whose history this screen reads and writes, or null when no
+  /// account identity has resolved yet (history then stays dormant).
+  int? get _accountUserId {
+    try {
+      return context.read<AccountStore>().activeUserId;
+    } catch (_) {
+      // Preview and widget-test trees may not install the account store.
+      return null;
+    }
+  }
+
+  void _handleHistoryChanged() {
+    if (mounted) unawaited(_loadHistory());
+  }
+
+  Future<void> _loadHistory() async {
+    final generation = ++_historyGeneration;
+    final userId = _accountUserId;
+    if (userId != _historyUserId) {
+      // Chat ids are account-scoped; a resolved summary from another account
+      // must never be drawn as this one's history row.
+      _historyUserId = userId;
+      _recentChatCache.clear();
+      _recentChats = const [];
+    }
+    final ids = await _history.load(userId);
+    if (!mounted || generation != _historyGeneration) return;
+    final missing = [
+      for (final id in ids)
+        if (!_recentChatCache.containsKey(id)) id,
+    ];
+    if (missing.isNotEmpty) {
+      final fetched = await Future.wait(missing.map(_fetchRecentChat));
+      if (!mounted || generation != _historyGeneration) return;
+      for (var i = 0; i < missing.length; i++) {
+        final chat = fetched[i];
+        if (chat != null) _recentChatCache[missing[i]] = chat;
+      }
+    }
+    // The store's order is authoritative: a cache hit still has to follow the
+    // position its id holds, not the order it was first resolved in.
+    final chats = <ChatSummary>[];
+    for (final id in ids) {
+      final chat = _recentChatCache[id];
+      if (chat != null) chats.add(chat);
+    }
+    setState(() {
+      _recentChats = chats;
+      _historyLoaded = true;
+    });
+  }
+
+  Future<ChatSummary?> _fetchRecentChat(int id) async {
+    try {
+      return TDParse.chat(
+        await TdClient.shared.query({'@type': 'getChat', 'chat_id': id}),
+      );
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// The history entries the typed text still describes.
+  ///
+  /// The reference matches a word of the chat's name against the query and
+  /// keeps at most five; with no query it shows the whole list.
+  List<ChatSummary> get _visibleRecents {
+    final query = _query.trim().toLowerCase();
+    if (query.isEmpty) return _recentChats;
+    final out = <ChatSummary>[];
+    for (final chat in _recentChats) {
+      if (_recentMatches(chat.title, query)) {
+        out.add(chat);
+        if (out.length >= 5) break;
+      }
+    }
+    return out;
+  }
+
+  static bool _recentMatches(String title, String query) {
+    for (final word in title.toLowerCase().split(' ')) {
+      if (word.isEmpty) continue;
+      if (word.startsWith(query) || query.startsWith(word)) return true;
+    }
+    return false;
+  }
+
+  void _recordHistory(int chatId) {
+    unawaited(_history.record(_accountUserId, chatId));
+  }
+
+  Future<void> _openRecent(ChatSummary chat) async {
+    _recordHistory(chat.id);
+    await openChatFromCurrentWindow(
+      context,
+      chatId: chat.id,
+      title: chat.title,
+    );
+  }
+
+  Future<void> _confirmRemoveRecent(ChatSummary chat) async {
+    final confirmed = await showAppConfirmDialog(
+      context,
+      title: AppStringKeys.searchHistoryRemoveTitle,
+      message: AppStrings.t(AppStringKeys.searchHistoryRemoveMessage, {
+        'value1': chat.title,
+      }),
+      confirmText: AppStringKeys.searchHistoryRemoveAction,
+      destructive: true,
+    );
+    if (!confirmed || !mounted) return;
+    await _history.remove(_accountUserId, chat.id);
+  }
+
+  Future<void> _confirmClearHistory() async {
+    final visible = _visibleRecents;
+    final confirmed = await showAppConfirmDialog(
+      context,
+      title: AppStringKeys.searchHistoryClearTitle,
+      message: AppStringKeys.searchHistoryClearMessage,
+      confirmText: AppStringKeys.searchHistoryClearAction,
+      destructive: true,
+    );
+    if (!confirmed || !mounted) return;
+    // A narrowed list clears only the rows it is showing; the unfiltered list
+    // clears everything, the way the reference's Clear does.
+    if (_query.trim().isEmpty) {
+      await _history.clear(_accountUserId);
+    } else {
+      await _history.removeAll(_accountUserId, [
+        for (final chat in visible) chat.id,
+      ]);
+    }
   }
 
   /// A keystroke fans out into searchChats + searchContacts + searchPublicChats
@@ -1728,21 +1849,8 @@ class _SearchViewState extends State<SearchView> {
       return MiniAppsSearchTab(query: _query);
     }
     final hits = _vm.resultsFor(_tab);
-    final allowEmptyQuery = _tab != SearchTab.chats;
-    if (_query.trim().isEmpty && !allowEmptyQuery) {
-      return _empty(AppStrings.t(AppStringKeys.chatsSearchPlaceholder));
-    }
-    if (_vm.isLoading(_tab) && hits.isEmpty) {
-      return Container(
-        color: c.groupedBackground,
-        alignment: Alignment.center,
-        child: const SizedBox(
-          width: 22,
-          height: 22,
-          child: CupertinoActivityIndicator(radius: 11),
-        ),
-      );
-    }
+    if (_tab == SearchTab.chats) return _chatResults(hits);
+    if (_vm.isLoading(_tab) && hits.isEmpty) return _loading(c);
     if (hits.isEmpty) {
       return _empty(AppStrings.t(AppStringKeys.chatsSearchNoResults));
     }
@@ -1752,28 +1860,147 @@ class _SearchViewState extends State<SearchView> {
         padding: EdgeInsets.zero,
         keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
         itemCount: hits.length,
+        itemBuilder: (context, i) => _hitListRow(hits[i]),
+      ),
+    );
+  }
+
+  /// The Chats tab: the account's search history first, then live results.
+  ///
+  /// The reference treats the typed text as a filter over the history before
+  /// the network answers, so a chat searched before is one word away instead
+  /// of one round trip.
+  Widget _chatResults(List<_SearchHit> hits) {
+    final c = context.colors;
+    final query = _query.trim();
+    final recents = _visibleRecents;
+    final recentIds = {for (final chat in recents) chat.id};
+    final visibleHits = [
+      for (final hit in hits)
+        if (hit.chat == null || !recentIds.contains(hit.chat!.id)) hit,
+    ];
+    if (query.isEmpty && recents.isEmpty) {
+      if (!_historyLoaded) return ColoredBox(color: c.groupedBackground);
+      return _empty(AppStrings.t(AppStringKeys.chatsSearchPlaceholder));
+    }
+    if (query.isNotEmpty && recents.isEmpty && visibleHits.isEmpty) {
+      if (_vm.isLoading(_tab) && hits.isEmpty) return _loading(c);
+      return _empty(AppStrings.t(AppStringKeys.chatsSearchNoResults));
+    }
+    final gap = recents.isNotEmpty && visibleHits.isNotEmpty ? 1 : 0;
+    final itemCount =
+        (recents.isEmpty ? 0 : 1) + recents.length + gap + visibleHits.length;
+    return Container(
+      color: c.background,
+      child: ListView.builder(
+        padding: EdgeInsets.zero,
+        keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+        itemCount: itemCount,
         itemBuilder: (context, i) {
-          final hit = hits[i];
-          return Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              GestureDetector(
-                behavior: HitTestBehavior.opaque,
-                onTap: () => _open(hit),
-                child: hit.chat != null
-                    ? ChatRowView(chat: hit.chat!)
-                    : _hitRow(hit),
-              ),
-              const InsetDivider(leadingInset: 78),
-            ],
-          );
+          if (recents.isNotEmpty) {
+            if (i == 0) return _recentHeader(c);
+            if (i <= recents.length) return _recentRow(recents[i - 1]);
+            i -= recents.length + 1;
+            if (gap == 1) {
+              if (i == 0) {
+                return ColoredBox(
+                  color: c.groupedBackground,
+                  child: const SizedBox(height: 8),
+                );
+              }
+              i -= 1;
+            }
+          }
+          return _hitListRow(visibleHits[i]);
         },
       ),
     );
   }
 
+  Widget _hitListRow(_SearchHit hit) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: () => _open(hit),
+          child: hit.chat != null ? ChatRowView(chat: hit.chat!) : _hitRow(hit),
+        ),
+        const InsetDivider(leadingInset: 78),
+      ],
+    );
+  }
+
+  /// The "Recent" band above the history rows, with the reference's Clear.
+  Widget _recentHeader(AppColors c) {
+    return Container(
+      key: const ValueKey('search-recent-header'),
+      height: 34,
+      padding: const EdgeInsets.only(left: 14, right: 6),
+      alignment: Alignment.centerLeft,
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(
+              AppStrings.t(AppStringKeys.searchRecent),
+              style: TextStyle(
+                fontSize: 13,
+                fontWeight: _searchEmphasisWeight,
+                color: c.textSecondary,
+              ),
+            ),
+          ),
+          GestureDetector(
+            key: const ValueKey('search-recent-clear'),
+            behavior: HitTestBehavior.opaque,
+            onTap: () => unawaited(_confirmClearHistory()),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+              child: Text(
+                AppStrings.t(AppStringKeys.searchHistoryClearAction),
+                style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: _searchEmphasisWeight,
+                  color: AppTheme.brand,
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _recentRow(ChatSummary chat) {
+    return GestureDetector(
+      key: ValueKey('search-recent-${chat.id}'),
+      behavior: HitTestBehavior.opaque,
+      onTap: () => unawaited(_openRecent(chat)),
+      onLongPress: () => unawaited(_confirmRemoveRecent(chat)),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          ChatRowView(chat: chat),
+          const InsetDivider(leadingInset: 78),
+        ],
+      ),
+    );
+  }
+
+  Widget _loading(AppColors c) {
+    return Container(
+      color: c.groupedBackground,
+      alignment: Alignment.center,
+      child: const SizedBox(
+        width: 22,
+        height: 22,
+        child: CupertinoActivityIndicator(radius: 11),
+      ),
+    );
+  }
+
   Future<void> _open(_SearchHit hit) async {
-    await _openSearchHit(context, hit);
+    await _openSearchHit(context, hit, onChatOpened: _recordHistory);
   }
 
   Widget _hitRow(_SearchHit hit) {
@@ -1824,54 +2051,15 @@ class _SearchViewState extends State<SearchView> {
     );
   }
 
-  Widget _hitThumb(_SearchHit hit) {
-    final image = hit.thumbnail ?? hit.photo;
-    if (hit.chat != null || hit.userId != null && hit.message == null) {
-      return PhotoAvatar(title: hit.title, photo: hit.photo, size: 54);
-    }
-    if (image != null) {
-      return ClipRRect(
-        borderRadius: BorderRadius.circular(AppRadius.control),
-        child: SizedBox(
-          width: 54,
-          height: 54,
-          child: Stack(
-            fit: StackFit.expand,
-            children: [
-              TDImage(photo: image),
-              if (hit.message?.video != null)
-                Center(
-                  child: Container(
-                    width: 26,
-                    height: 26,
-                    alignment: Alignment.center,
-                    decoration: BoxDecoration(
-                      color: const Color(0xFF000000).withValues(alpha: 0.50),
-                      shape: BoxShape.circle,
-                    ),
-                    child: const AppIcon(
-                      HeroAppIcons.play,
-                      size: 13,
-                      color: Color(0xFFFFFFFF),
-                    ),
-                  ),
-                ),
-            ],
-          ),
-        ),
-      );
-    }
-    return Container(
-      width: 54,
-      height: 54,
-      alignment: Alignment.center,
-      decoration: BoxDecoration(
-        color: hit.tint.withValues(alpha: 0.14),
-        borderRadius: BorderRadius.circular(AppRadius.control),
-      ),
-      child: AppIcon(hit.icon, size: 24, color: hit.tint),
-    );
-  }
+  Widget _hitThumb(_SearchHit hit) => SearchHitLeadingImage(
+    title: hit.avatarTitle,
+    isPeer: hit.isPeerResult,
+    size: 54,
+    photo: hit.photo,
+    media: hit.media,
+    icon: hit.icon,
+    tint: hit.tint,
+  );
 
   Widget _empty(String text) {
     final c = context.colors;
@@ -1947,10 +2135,27 @@ class _SearchViewState extends State<SearchView> {
   }
 }
 
+/// Records a chat opened from the desktop search popover into the same
+/// history the mobile search page lists.
+///
+/// The popover is dismissed before the hit opens, so the caller passes the
+/// navigator's overlay context — the one that outlives the row.
+void _recordSearchHistory(BuildContext context, int chatId) {
+  int? userId;
+  try {
+    userId = context.read<AccountStore>().activeUserId;
+  } catch (_) {
+    // No account store in this tree; the history stays dormant.
+    userId = null;
+  }
+  unawaited(SearchHistoryStore.shared.record(userId, chatId));
+}
+
 Future<void> _openSearchHit(
   BuildContext context,
   _SearchHit hit, {
   DesktopTelegramLinkOpener? onOpenTelegramLink,
+  void Function(int chatId)? onChatOpened,
 }) async {
   final telegramLink = hit.telegramLink;
   if (telegramLink != null) {
@@ -1960,6 +2165,7 @@ Future<void> _openSearchHit(
   }
   if (hit.message != null && hit.chatId != null) {
     final title = hit.sourceTitle;
+    onChatOpened?.call(hit.chatId!);
     await openChatFromCurrentWindow(
       context,
       chatId: hit.chatId!,
@@ -1970,6 +2176,7 @@ Future<void> _openSearchHit(
   }
   final chat = hit.chat;
   if (chat != null) {
+    onChatOpened?.call(chat.id);
     await openChatFromCurrentWindow(
       context,
       chatId: chat.id,
@@ -1987,6 +2194,7 @@ Future<void> _openSearchHit(
     });
     final summary = TDParse.chat(chat);
     if (!context.mounted || summary == null) return;
+    onChatOpened?.call(summary.id);
     await openChatFromCurrentWindow(
       context,
       chatId: summary.id,
@@ -2314,19 +2522,34 @@ class _SearchViewModel extends ChangeNotifier {
           (a, b) => (b.integer('date') ?? 0).compareTo(a.integer('date') ?? 0),
         );
       final seen = <String>{};
-      final out = <_SearchHit>[];
+      final parsed = <(ChatMessage, int, _SearchSource)>[];
+      final sourceCache = <int, _SearchSource>{};
       for (final object in raw) {
-        if (!_isCurrent(tab, runId, trimmed) || out.length >= resultLimit) {
+        if (!_isCurrent(tab, runId, trimmed) || parsed.length >= resultLimit) {
           break;
         }
         final chatId = object.int64('chat_id');
-        final message = TDParse.message(object);
-        if (chatId == null || message == null) continue;
+        if (chatId == null) continue;
+        final source = sourceCache[chatId] ??= await _sourceFor(chatId);
+        final message = TDParse.message(object, isChannel: source.isChannel);
+        if (message == null) continue;
         final key = '$chatId:${message.id}';
         if (!seen.add(key)) continue;
-        final source = await _sourceFor(chatId);
-        out.add(_SearchHit.message(message, chatId: chatId, source: source));
+        parsed.add((message, chatId, source));
       }
+      final senderPhotos = await _senderPhotosFor(parsed, tab);
+      if (!_isCurrent(tab, runId, trimmed)) return;
+      final out = <_SearchHit>[
+        for (final (message, chatId, source) in parsed)
+          _SearchHit.message(
+            message,
+            chatId: chatId,
+            source: source,
+            tab: tab,
+            senderPhoto: senderPhotos[message.senderId],
+            senderKnown: senderPhotos.containsKey(message.senderId),
+          ),
+      ];
       _finish(tab, runId, trimmed, out);
     } catch (_) {
       _finish(tab, runId, trimmed, const []);
@@ -2406,6 +2629,33 @@ class _SearchViewModel extends ChangeNotifier {
     }
   }
 
+  /// Resolves the avatar of each message's actual author. A search hit used to
+  /// lead with the chat photo, which names the wrong person for a group search
+  /// result; one request per distinct sender fills every row.
+  Future<Map<int, TdFileRef?>> _senderPhotosFor(
+    List<(ChatMessage, int, _SearchSource)> messages,
+    SearchTab tab,
+  ) async {
+    final photos = <int, TdFileRef?>{};
+    final pending = <int, Future<TdFileRef?>>{};
+    for (final (message, _, source) in messages) {
+      // The Media and Music tabs paint their own picture, so a hit with one
+      // needs no avatar; every other tab (including Messages) shows the sender.
+      if (_SearchHit._messageMediaThumb(message, tab) != null) continue;
+      final id = message.senderId;
+      if (id == null) continue;
+      pending.putIfAbsent(
+        id,
+        () => messageSenderPhoto(message, chatPhoto: source.photo),
+      );
+    }
+    await Future.wait([
+      for (final entry in pending.entries)
+        entry.value.then((photo) => photos[entry.key] = photo),
+    ]);
+    return photos;
+  }
+
   Future<_SearchSource> _sourceFor(int chatId) async {
     try {
       final chat = await TdClient.shared.query({
@@ -2415,6 +2665,7 @@ class _SearchViewModel extends ChangeNotifier {
       return _SearchSource(
         title: chat.str('title') ?? '',
         photo: TDParse.smallPhoto(chat.obj('photo')),
+        isChannel: TDParse.chatKind(chat) == ChatKind.channel,
       );
     } catch (_) {
       return const _SearchSource(title: '', photo: null);
@@ -2443,6 +2694,110 @@ class _SearchViewModel extends ChangeNotifier {
   }
 }
 
+/// The avatar a message search hit leads with: its sender's profile photo, or
+/// [chatPhoto] when the message has no user/chat author (service, anonymous).
+@visibleForTesting
+Future<TdFileRef?> messageSenderPhoto(
+  ChatMessage message, {
+  TdFileRef? chatPhoto,
+}) async {
+  if (message.senderPhoto != null) return message.senderPhoto;
+  final id = message.senderId;
+  if (id == null || id == 0) return chatPhoto;
+  try {
+    final object = id > 0
+        ? await TdClient.shared.query({'@type': 'getUser', 'user_id': id})
+        : await TdClient.shared.query({'@type': 'getChat', 'chat_id': id});
+    if (id > 0) {
+      message.senderName ??= TDParse.userName(object);
+    } else {
+      message.senderName ??= object.str('title');
+    }
+    return TDParse.smallPhoto(
+      id > 0 ? object.obj('profile_photo') : object.obj('photo'),
+    );
+  } catch (_) {
+    return null;
+  }
+}
+
+/// The picture a message hit leads with for [tab]. Exposed so the tab rule
+/// (Media → thumbnail, Music → cover, Messages → sender avatar) stays testable.
+@visibleForTesting
+TdFileRef? searchTabMediaThumb(ChatMessage message, SearchTab tab) =>
+    _SearchHit._messageMediaThumb(message, tab);
+
+/// The leading image of a search row.
+///
+/// Every result in the Chats/Messages/Links/Files/Voice tabs identifies the
+/// message's SENDER with the same round avatar the chat list uses (not the chat
+/// the search found it in, and not the message's content type). Only the Media
+/// tab shows a thumbnail and the Music tab a cover, both in a rounded square:
+/// there the picture IS the result. Hits with no identity (a `tg://` link
+/// suggestion) keep their glyph in the same circle.
+class SearchHitLeadingImage extends StatelessWidget {
+  const SearchHitLeadingImage({
+    super.key,
+    required this.title,
+    required this.isPeer,
+    required this.size,
+    required this.icon,
+    required this.tint,
+    this.photo,
+    this.media,
+  });
+
+  /// The peer's name; the monogram falls back to it when there is no photo.
+  final String title;
+
+  /// True for a chat / user / message hit, whose leading image is an identity.
+  final bool isPeer;
+  final double size;
+  final TdFileRef? photo;
+
+  /// A media thumbnail (`message.image` for photo/video/animation) or a
+  /// music cover. Non-null wins over the peer avatar and draws as a rounded
+  /// square instead of a circle.
+  final TdFileRef? media;
+  final AppIconData icon;
+  final Color tint;
+
+  @override
+  Widget build(BuildContext context) {
+    final media = this.media;
+    if (media != null) {
+      return ClipRRect(
+        key: const ValueKey('search-hit-media-thumb'),
+        borderRadius: BorderRadius.circular(size * 0.15),
+        child: SizedBox(
+          width: size,
+          height: size,
+          child: TDImage(
+            photo: media.thumbnail ?? media,
+            cornerRadius: 0,
+            cacheWidth: (size * MediaQuery.devicePixelRatioOf(context)).round(),
+            cacheHeight: (size * MediaQuery.devicePixelRatioOf(context))
+                .round(),
+          ),
+        ),
+      );
+    }
+    if (isPeer || photo != null) {
+      return PhotoAvatar(title: title, photo: photo, size: size);
+    }
+    return Container(
+      width: size,
+      height: size,
+      alignment: Alignment.center,
+      decoration: BoxDecoration(
+        color: tint.withValues(alpha: 0.14),
+        shape: BoxShape.circle,
+      ),
+      child: AppIcon(icon, size: size * 0.44, color: tint),
+    );
+  }
+}
+
 class _SearchHit {
   _SearchHit({
     required this.title,
@@ -2450,7 +2805,6 @@ class _SearchHit {
     this.timeLabel = '',
     this.date = 0,
     this.sourceTitle = '',
-    this.thumbnail,
     AppIconData? icon,
     this.tint = const Color(0xFF12B7F5),
     this.photo,
@@ -2459,6 +2813,7 @@ class _SearchHit {
     this.chatId,
     this.message,
     this.telegramLink,
+    this.media,
   }) : icon = icon ?? HeroAppIcons.message;
 
   factory _SearchHit.chat(ChatSummary chat, {String? subtitle}) => _SearchHit(
@@ -2504,23 +2859,31 @@ class _SearchHit {
     ChatMessage message, {
     required int chatId,
     required _SearchSource source,
+    required SearchTab tab,
+    TdFileRef? senderPhoto,
+    bool senderKnown = false,
   }) {
     final document = message.document;
     final music = message.music;
     final title = document?.fileName ?? music?.title ?? _messageTitle(message);
     final subtitle = _messageSubtitle(message, source.title);
+    final media = _messageMediaThumb(message, tab);
     return _SearchHit(
       title: title,
       subtitle: subtitle,
       timeLabel: DateText.listLabel(message.date),
       date: message.date,
       sourceTitle: source.title,
-      photo: source.photo,
-      thumbnail: message.previewImage ?? music?.cover,
+      // A message hit identifies the person who wrote it, not the chat the
+      // search found it in. A resolved sender with no photo keeps the monogram
+      // (sender; a chat photo would name the wrong peer). Media/music hits
+      // replace this with their picture.
+      photo: senderKnown ? senderPhoto : source.photo,
       chatId: chatId,
       message: message,
       icon: _messageIcon(message),
       tint: _messageTint(message),
+      media: media,
     );
   }
 
@@ -2530,12 +2893,27 @@ class _SearchHit {
   final int date;
   final String sourceTitle;
   final TdFileRef? photo;
-  final TdFileRef? thumbnail;
   final ChatSummary? chat;
+
+  /// The name the leading avatar's monogram draws from: the message's sender
+  /// when known, otherwise the chat it was found in, never the message text.
+  String get avatarTitle {
+    final sender = message?.senderName?.trim();
+    if (sender != null && sender.isNotEmpty) return sender;
+    return sourceTitle.isNotEmpty ? sourceTitle : title;
+  }
+
+  /// Chat, user and message hits all identify a peer; a bare link suggestion
+  /// does not.
+  bool get isPeerResult => chat != null || userId != null || message != null;
   final int? userId;
   final int? chatId;
   final ChatMessage? message;
   final String? telegramLink;
+
+  /// The result's own picture, only in the Media (thumbnail) and Music (cover)
+  /// tabs; every other tab keeps the sender/peer avatar.
+  final TdFileRef? media;
   final AppIconData icon;
   final Color tint;
 
@@ -2602,6 +2980,18 @@ class _SearchHit {
     return pieces.join(' · ');
   }
 
+  /// The picture a message hit leads with, decided by the selected search tab,
+  /// not by the message's content type: the Media tab shows the thumbnail, the
+  /// Music tab the cover, and every other tab (Messages included) shows the
+  /// sender avatar even when the message carries a picture.
+  static TdFileRef? _messageMediaThumb(ChatMessage message, SearchTab tab) {
+    return switch (tab) {
+      SearchTab.media => message.image,
+      SearchTab.music => message.music?.cover,
+      _ => null,
+    };
+  }
+
   static AppIconData _messageIcon(ChatMessage message) {
     if (message.document != null) return HeroAppIcons.solidFile;
     if (message.music != null) return HeroAppIcons.music;
@@ -2630,7 +3020,12 @@ class _SearchHit {
 }
 
 class _SearchSource {
-  const _SearchSource({required this.title, required this.photo});
+  const _SearchSource({
+    required this.title,
+    required this.photo,
+    this.isChannel = false,
+  });
   final String title;
   final TdFileRef? photo;
+  final bool isChannel;
 }

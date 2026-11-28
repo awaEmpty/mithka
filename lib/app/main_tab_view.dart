@@ -9,41 +9,47 @@
 
 import 'dart:async';
 import 'dart:math' as math;
-
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/semantics.dart' show CustomSemanticsAction;
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-
 import '../auth/account_store.dart';
 import '../auth/auth_manager.dart';
 import '../channels/topic_channels_view.dart';
 import '../channels/topic_list_host.dart';
-import '../chat/chat_info_view.dart';
-import '../chat/chat_members_view.dart';
+import '../chat/admin/chat_info_view.dart';
+import '../chat/admin/chat_members_view.dart';
 import '../chat/chat_picker_view.dart';
 import '../chat/chat_view.dart';
+import '../chat/composer/media_send_preview_view.dart';
+import '../chat/composer/outgoing_attachment.dart';
 import '../chat/desktop_chat_context_pane.dart';
-import '../chat/media_send_preview_view.dart';
-import '../chat/music_player_controller.dart';
-import '../chat/outgoing_attachment.dart';
-import '../chat/pangu_spacing.dart';
+import '../chat/media/music_player_controller.dart';
+import '../chat/messages/pangu_spacing.dart';
 import '../chats/archived_chats_view.dart';
 import '../chats/chat_list_view.dart';
 import '../communities/community_view.dart';
 import '../components/app_icons.dart';
 import '../components/app_interactive_surface.dart';
+import '../components/brand_mark.dart';
 import '../components/drawer_controller.dart' as dc;
+import '../components/toast.dart';
 import '../components/ui_components.dart';
+import '../config/build_flags.dart';
 import '../contacts/contacts_view.dart';
 import '../l10n/app_locale_controller.dart';
 import '../l10n/app_localizations.dart';
 import '../moments/moments_view.dart';
 import '../platform/android_share_intent.dart';
+import '../profile/profile_proxy_button.dart';
 import '../profile/profile_view.dart';
 import '../settings/desktop_hotkey_controller.dart';
+import '../settings/network_proxy/proxy_status.dart';
+import '../settings/network_proxy/proxy_view.dart';
+import '../settings/privacy_security/ghost_mode_controller.dart';
+import '../settings/privacy_security/ghost_mode_settings_view.dart';
 import '../tdlib/json_helpers.dart';
 import '../tdlib/td_client.dart';
 import '../tdlib/td_models.dart';
@@ -55,16 +61,18 @@ import '../theme/theme_controller.dart';
 import '../update/update_checker.dart';
 import 'account_picker_sheet.dart';
 import 'adaptive_split_layout.dart';
+import 'android_share_intake.dart';
 import 'app_navigator.dart';
 import 'bottom_bar_layout.dart';
 import 'chat_deep_link_controller.dart';
 import 'chat_pane.dart';
-import 'desktop_chat_window.dart';
-import 'desktop_navigation_rail.dart';
-import 'desktop_utility_window.dart';
+import 'desktop/desktop_chat_window.dart';
+import 'desktop/desktop_navigation_rail.dart';
+import 'desktop/desktop_utility_window.dart';
 import 'detail_content_reveal.dart';
 import 'horizontal_safe_viewport.dart';
-import 'liquid_glass_bottom_bar.dart' show LiquidGlassBottomBar;
+import 'liquid_glass_bottom_bar.dart'
+    show LiquidGlassBottomBar, glassSelectionCurve, glassSelectionDuration;
 import 'native_glass_surface.dart';
 import 'native_tab_bar.dart';
 import 'primary_chat_launcher.dart';
@@ -119,7 +127,8 @@ class _MainTabViewState extends _MainRootViewState<MainTabView> {
 
 class _MainSplitRootViewState extends _MainRootViewState<MainSplitRootView> {}
 
-abstract class _MainRootViewState<T extends StatefulWidget> extends State<T> {
+abstract class _MainRootViewState<T extends StatefulWidget> extends State<T>
+    with WidgetsBindingObserver {
   static const _desktopSidebarWidthKey = 'mithka.desktopSplitSidebarWidth.v1';
 
   bool get checkForUpdates => false;
@@ -155,7 +164,12 @@ abstract class _MainRootViewState<T extends StatefulWidget> extends State<T> {
   bool? _wasUsingSplitSelection;
   DesktopHotkeyRegistration? _newChatHotkeyRegistration;
   final _androidShareIntent = AndroidShareIntentController.shared;
-  bool _presentingAndroidShare = false;
+  late final AndroidShareIntake _androidShareIntake = AndroidShareIntake(
+    pickChat: _pickAndroidShareChat,
+    sendText: _sendAndroidShareText,
+    sendFiles: _sendAndroidShareFiles,
+    reportFailure: _reportAndroidShareFailure,
+  );
 
   @override
   void initState() {
@@ -167,11 +181,11 @@ abstract class _MainRootViewState<T extends StatefulWidget> extends State<T> {
         split.keysHost?.call(_navKeys);
     }
     if (_androidShareIntent.supported) {
+      WidgetsBinding.instance.addObserver(this);
       _androidShareIntent.addListener(_handleAndroidShareIntentChanged);
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) return;
-        unawaited(_androidShareIntent.start());
-        unawaited(_presentPendingAndroidShare());
+        unawaited(_startAndroidShareIntake());
       });
     }
     if (isDesktopTargetPlatform()) {
@@ -262,6 +276,7 @@ abstract class _MainRootViewState<T extends StatefulWidget> extends State<T> {
     _observedAccounts?.removeListener(_handleAccountStoreChanged);
     _chatDeepLinks?.removeListener(_handlePendingChatDeepLink);
     _androidShareIntent.removeListener(_handleAndroidShareIntentChanged);
+    WidgetsBinding.instance.removeObserver(this);
     _chatListController.dispose();
     _unread.dispose();
     _tabBar.dispose();
@@ -270,105 +285,118 @@ abstract class _MainRootViewState<T extends StatefulWidget> extends State<T> {
     super.dispose();
   }
 
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // A share always brings this app to the front. Polling here recovers a
+    // payload whose push delivery was dropped (the platform channel does not
+    // buffer a call made while Dart had no handler) without waiting for a
+    // remount, and it is idempotent: the payload id de-duplicates it.
+    if (state == AppLifecycleState.resumed && _androidShareIntent.supported) {
+      unawaited(_startAndroidShareIntake());
+    }
+  }
+
   void _handleAndroidShareIntentChanged() {
     if (!mounted || !_androidShareIntent.hasPending) return;
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) unawaited(_presentPendingAndroidShare());
+      if (mounted) unawaited(_androidShareIntake.presentPending(context));
     });
   }
 
-  Future<void> _presentPendingAndroidShare() async {
-    if (!mounted || !_androidShareIntent.supported || _presentingAndroidShare) {
+  /// The platform keeps the share that opened this window, so asking again here
+  /// recovers a delivery that landed before this surface (or this Dart handler)
+  /// existed. `start()` is idempotent and keeps the pending payload.
+  Future<void> _startAndroidShareIntake() async {
+    await _androidShareIntent.start();
+    if (!mounted) return;
+    await _androidShareIntake.presentPending(context);
+  }
+
+  Future<ChatSummary?> _pickAndroidShareChat(BuildContext context) {
+    return Navigator.of(context, rootNavigator: true).push<ChatSummary>(
+      MaterialPageRoute(
+        builder: (_) => const ChatPickerView(
+          title: AppStringKeys.topicChatShare,
+          showFolders: true,
+        ),
+      ),
+    );
+  }
+
+  Future<void> _sendAndroidShareText(
+    BuildContext context,
+    ChatSummary chat,
+    String text,
+  ) async {
+    await TdClient.shared.query(
+      setTextChatDraftRequest(
+        chatId: chat.id,
+        formattedText: {'@type': 'formattedText', 'text': text},
+        date: DateTime.now().millisecondsSinceEpoch ~/ 1000,
+      ),
+    );
+    if (!context.mounted) return;
+    await openChatFromCurrentWindow(
+      context,
+      chatId: chat.id,
+      title: chat.title,
+    );
+  }
+
+  Future<void> _sendAndroidShareFiles(
+    BuildContext context,
+    ChatSummary chat,
+    List<AndroidSharedFile> files,
+    String caption,
+  ) async {
+    final attachments = [
+      for (final file in files)
+        OutgoingAttachment(
+          path: file.path,
+          kind: file.attachmentKind,
+          fileName: file.fileName,
+        ),
+    ];
+    final preview = await Navigator.of(context, rootNavigator: true)
+        .push<MediaSendPreviewResult>(
+          MaterialPageRoute(
+            fullscreenDialog: true,
+            builder: (_) => MediaSendPreviewView(
+              attachments: attachments,
+              initialCaption: caption,
+            ),
+          ),
+        );
+    if (!context.mounted || preview == null || preview.attachments.isEmpty) {
       return;
     }
-    final payload = _androidShareIntent.takePending();
-    if (payload == null) return;
-    _presentingAndroidShare = true;
-    final copiedPaths = <String>[];
-    try {
-      final sharedFiles = await _androidShareIntent.copyFiles(payload.uris);
-      copiedPaths.addAll(sharedFiles.map((file) => file.path));
-      if (!mounted) return;
-      if (sharedFiles.isEmpty && payload.text.trim().isEmpty) return;
-
-      final picked = await Navigator.of(context, rootNavigator: true)
-          .push<ChatSummary>(
-            MaterialPageRoute(
-              builder: (_) =>
-                  const ChatPickerView(title: AppStringKeys.topicChatShare),
-            ),
-          );
-      if (!mounted || picked == null) return;
-
-      if (sharedFiles.isEmpty) {
-        await TdClient.shared.query(
-          setTextChatDraftRequest(
-            chatId: picked.id,
-            formattedText: {'@type': 'formattedText', 'text': payload.text},
-            date: DateTime.now().millisecondsSinceEpoch ~/ 1000,
-          ),
-        );
-        if (!mounted) return;
-        await openChatFromCurrentWindow(
-          context,
-          chatId: picked.id,
-          title: picked.title,
-        );
-        return;
-      }
-
-      final attachments = [
-        for (final file in sharedFiles)
-          OutgoingAttachment(
-            path: file.path,
-            kind: file.attachmentKind,
-            fileName: file.fileName,
-          ),
-      ];
-      final preview = await Navigator.of(context, rootNavigator: true)
-          .push<MediaSendPreviewResult>(
-            MaterialPageRoute(
-              fullscreenDialog: true,
-              builder: (_) => MediaSendPreviewView(
-                attachments: attachments,
-                initialCaption: payload.text,
-              ),
-            ),
-          );
-      if (!mounted || preview == null || preview.attachments.isEmpty) return;
-      // Read the switch before the await below: the caption is plain text, so
-      // 盘古之白 has no entities to move.
-      final spaceCaption = context.read<ThemeController>().panguOnSend;
-      final resolved = await resolveAttachmentListDimensions(
-        preview.attachments,
-      );
-      final spacedCaption = spaceCaption
-          ? PanguSpacing.transformUnannotated(preview.caption).text
-          : preview.caption;
-      final requests = buildAttachmentSendRequests(
-        chatId: picked.id,
-        attachments: resolved,
-        caption: spacedCaption,
-        sendConfiguration: preview.sendConfiguration,
-      );
-      for (final request in requests) {
-        await TdClient.shared.query(request);
-      }
-      if (!mounted) return;
-      await openChatFromCurrentWindow(
-        context,
-        chatId: picked.id,
-        title: picked.title,
-      );
-    } finally {
-      await _androidShareIntent.deleteFiles(copiedPaths);
-      _presentingAndroidShare = false;
-      if (mounted && _androidShareIntent.hasPending) {
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (mounted) unawaited(_presentPendingAndroidShare());
-        });
-      }
+    // Read the switch before the await below: the caption is plain text, so
+    // 盘古之白 has no entities to move.
+    final spaceCaption = context.read<ThemeController>().panguOnSend;
+    final resolved = await resolveAttachmentListDimensions(preview.attachments);
+    final spacedCaption = spaceCaption
+        ? PanguSpacing.transformUnannotated(preview.caption).text
+        : preview.caption;
+    final requests = buildAttachmentSendRequests(
+      chatId: chat.id,
+      attachments: resolved,
+      caption: spacedCaption,
+      sendConfiguration: preview.sendConfiguration,
+    );
+    for (final request in requests) {
+      await TdClient.shared.query(request);
     }
+    if (!context.mounted) return;
+    await openChatFromCurrentWindow(
+      context,
+      chatId: chat.id,
+      title: chat.title,
+    );
+  }
+
+  void _reportAndroidShareFailure(BuildContext context) {
+    if (!context.mounted) return;
+    showToast(context, AppStringKeys.mithkaxAndroidShareFailed);
   }
 
   void _runChatListHotkey(VoidCallback action) {
@@ -400,7 +428,12 @@ abstract class _MainRootViewState<T extends StatefulWidget> extends State<T> {
   List<GlobalKey<NavigatorState>> get tabNavigatorKeys => _navKeys;
 
   static const _allTabs = [
-    _MainTabItem(0, AppStringKeys.tabMessages, HeroAppIcons.solidMessage),
+    _MainTabItem(
+      0,
+      AppStringKeys.tabMessages,
+      HeroAppIcons.message,
+      selectedIcon: HeroAppIcons.solidMessage,
+    ),
     _MainTabItem(
       1,
       AppStringKeys.tabChannels,
@@ -416,8 +449,8 @@ abstract class _MainRootViewState<T extends StatefulWidget> extends State<T> {
     _MainTabItem(
       3,
       AppStringKeys.tabMoments,
-      HeroAppIcons.circleNotch,
-      selectedIcon: HeroAppIcons.solidCircleNotch,
+      HeroAppIcons.star,
+      selectedIcon: HeroAppIcons.solidStar,
     ),
   ];
 
@@ -583,6 +616,8 @@ abstract class _MainRootViewState<T extends StatefulWidget> extends State<T> {
           messageId: replay.messageId,
           accountUserId: replay.accountUserId,
           accountSlot: replay.accountSlot,
+          externalReply: replay.externalReply,
+          forwardHandoff: replay.forwardHandoff,
         );
       });
       return;
@@ -592,6 +627,7 @@ abstract class _MainRootViewState<T extends StatefulWidget> extends State<T> {
         chatId: request.chatId,
         title: request.title,
         initialMessageId: request.messageId,
+        pendingForwardHandoff: request.forwardHandoff,
       );
       setState(() => _selection = 0);
       _showMessageChat(nextSelection);
@@ -611,6 +647,8 @@ abstract class _MainRootViewState<T extends StatefulWidget> extends State<T> {
             chatId: request.chatId,
             title: request.title,
             initialMessageId: request.messageId,
+            externalReplyHandoff: request.externalReply,
+            forwardHandoff: request.forwardHandoff,
           ),
         ),
       );
@@ -652,6 +690,25 @@ abstract class _MainRootViewState<T extends StatefulWidget> extends State<T> {
       for (var i = 0; i < others.length; i++)
         if (found[i]) others[i],
     ];
+  }
+
+  /// Ghost-mode settings straight from the desktop rail. The view reads
+  /// GhostModeController.shared, whose prefs the primary engine already
+  /// initialized; a plain route keeps it inside the main window (the
+  /// controller is not wired through the TD-proxy child engines).
+  Future<void> _openDesktopProxySettings() async {
+    await Navigator.of(context, rootNavigator: true).push<void>(
+      AppPageRoute<void>(pageBuilder: (_, _, _) => const ProxyView()),
+    );
+    unawaited(ProxyStatusController.shared.refresh());
+  }
+
+  void _openDesktopGhostMode() {
+    Navigator.of(context, rootNavigator: true).push<void>(
+      AppPageRoute<void>(
+        pageBuilder: (_, _, _) => const GhostModeSettingsView(),
+      ),
+    );
   }
 
   void _openDesktopUtility(
@@ -1071,7 +1128,13 @@ abstract class _MainRootViewState<T extends StatefulWidget> extends State<T> {
         ),
     ];
     final rail = AnimatedBuilder(
-      animation: Listenable.merge([_unread, _chatListController.sideFolders]),
+      // GhostModeController joins the rebuild set: the rail's ghost glyph is
+      // a status light and must repaint the moment the switch flips.
+      animation: Listenable.merge([
+        _unread,
+        _chatListController.sideFolders,
+        if (GhostModeController.isAvailable) GhostModeController.shared,
+      ]),
       builder: (context, _) => DesktopNavigationRail(
         destinations: destinations,
         folders: activeTabIndex == 0
@@ -1096,6 +1159,30 @@ abstract class _MainRootViewState<T extends StatefulWidget> extends State<T> {
         darkMode: Theme.of(context).brightness == Brightness.dark,
         onToggleThemeMode: () =>
             theme.toggleDayNight(Theme.of(context).brightness),
+        // 代理 straight from the rail: the drawer sidebar's status-light
+        // globe, re-hosted at the rail's 38pt footprint.
+        proxyButton: ProfileProxyButton(
+          extent: 38,
+          onTap: _openDesktopProxySettings,
+        ),
+        // Compile-time gated ghost-mode shortcut, right under the theme
+        // toggle (the rail's counterpart of the drawer sidebar's slot).
+        // The runtime sidebar-entry switch hides it on both surfaces.
+        ghostModeLabel:
+            allowTelegramTosViolations &&
+                GhostModeController.isAvailable &&
+                GhostModeController.shared.showSidebarEntry
+            ? AppStrings.t(AppStringKeys.ghostModeTitle)
+            : null,
+        ghostModeActive:
+            allowTelegramTosViolations &&
+            GhostModeController.shared.globalEnabled,
+        onOpenGhostMode:
+            allowTelegramTosViolations &&
+                GhostModeController.isAvailable &&
+                GhostModeController.shared.showSidebarEntry
+            ? _openDesktopGhostMode
+            : null,
         showAccountPhone: !theme.hideSidebarPhone,
         applicationMenuLabel: AppStrings.t(AppStringKeys.chatMenu),
         languageMenuLabel: AppStrings.t(AppStringKeys.languageMithkaLanguage),
@@ -1514,11 +1601,8 @@ abstract class _MainRootViewState<T extends StatefulWidget> extends State<T> {
           const SizedBox.shrink()
         else
           LiveArchivedChatsView(
-            updates: archivedSelection.updates,
-            chatsProvider: archivedSelection.chatsProvider,
+            model: archivedSelection.model,
             selectedChatId: _selectedMessageChat?.chatId,
-            onClearUnread: archivedSelection.onClearUnread,
-            onUnarchive: archivedSelection.onUnarchive,
             onBack: () => setState(() => _selectedArchivedChats = null),
             onChatSelected: (chat) {
               _showMessageChat(ChatListSelection.fromChat(chat));
@@ -1662,7 +1746,8 @@ abstract class _MainRootViewState<T extends StatefulWidget> extends State<T> {
       key: ValueKey(
         'message-detail-${selected.chatId}-${selected.supportsTopics}-'
         '${selected.initialMessageId ?? 0}-${selected.forumTopicId ?? 0}-'
-        '${selected.composerFocusRequestId}',
+        '${selected.composerFocusRequestId}-'
+        '${selected.pendingForwardHandoff != null ? 1 : 0}',
       ),
       child: ChatView(
         chatId: selected.chatId,
@@ -1676,7 +1761,11 @@ abstract class _MainRootViewState<T extends StatefulWidget> extends State<T> {
         showHeaderDivider: false,
         trailingPane: trailingPane,
         trailingPaneWidth: trailingPaneWidth,
+        // Every shell passes the context-pane toggle here, and only while the
+        // pane fits, so the edge tab shares the header button's state.
+        onTrailingPaneToggle: onInfoPressed,
         requestComposerFocusOnReady: selected.composerFocusRequestId != 0,
+        forwardHandoff: selected.pendingForwardHandoff,
         exitController: _messageChatExitController,
         revealLatestController: _messageRevealLatestController,
         onChatKindResolved: (kind) =>
@@ -1997,14 +2086,21 @@ class _MessageEmptyPane extends StatelessWidget {
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Image.asset('assets/penguin.png', width: 92, height: 92),
+              BrandMark(size: 92),
               const SizedBox(width: 18),
-              Text(
-                'Mithka',
-                style: TextStyle(
-                  fontSize: 64,
-                  fontWeight: FontWeight.w600,
-                  color: c.textTertiary,
+              // The 64 pt wordmark plus the mark overflows narrow panes; scale
+              // the pair down as one unit instead of clipping the text.
+              Flexible(
+                child: FittedBox(
+                  fit: BoxFit.scaleDown,
+                  child: Text(
+                    'Mithka X',
+                    style: TextStyle(
+                      fontSize: 64,
+                      fontWeight: FontWeight.w600,
+                      color: c.textTertiary,
+                    ),
+                  ),
                 ),
               ),
             ],
@@ -2335,9 +2431,10 @@ class _MainBottomBar extends StatelessWidget {
   /// sits over the detail pane, not over this column.
   final bool reserveBottomInset;
 
-  /// Label size the classic bar is laid out around. The icon block above it
-  /// keeps its size at every text scale, so only this line's growth is added
-  /// to the bar. The glass bar draws no label at all and always grows by zero.
+  /// Label size the bar is laid out around. The icon block above it keeps its
+  /// size at every text scale, so only this line's growth is added to the bar.
+  /// A host that draws no label — the glass bar docked in the split shell's
+  /// sidebar column — always grows by zero.
   static const double _labelSize = 11;
 
   /// Line box of the label relative to its font size.
@@ -2404,7 +2501,9 @@ class _MainBottomBar extends StatelessWidget {
                             alignment: Alignment.center,
                             children: [
                               AppIcon(
-                                items[i].icon,
+                                selection == i
+                                    ? items[i].selectedIcon
+                                    : items[i].icon,
                                 size: 24,
                                 color: selection == i
                                     ? c.linkBlue
@@ -2431,15 +2530,22 @@ class _MainBottomBar extends StatelessWidget {
         ),
       );
     }
-    // The glass row contains only centered icons and reserves no label height;
-    // the classic bar keeps growing with the scaled label line.
-    final labelGrowth = glass
-        ? 0.0
-        : math.max(
+    // The label rule follows the slot's width, not the surface: the compact
+    // shell (the only host that reserves the home indicator's clearance) spans
+    // the window, so each of its slots fits a label line under the icon. The
+    // split shell docks the bar inside its sidebar column, where the slot is
+    // narrower than the label and the selection capsule around it would reach
+    // past the tab it marks — that host keeps the Telegram-iOS icon-only row.
+    final drawsTabLabel = !glass || reserveBottomInset;
+    // Icons and badges keep their size, so a bar that draws labels only grows
+    // by what the scaled label line gains.
+    final labelGrowth = drawsTabLabel
+        ? math.max(
             0.0,
             (MediaQuery.textScalerOf(context).scale(_labelSize) - _labelSize) *
                 _labelLineHeight,
-          );
+          )
+        : 0.0;
     // Only the compact shell reserves the home indicator's own height; the
     // split shell leaves the window edge to its column, so the row keeps the
     // bar's whole box.
@@ -2515,11 +2621,15 @@ class _MainBottomBar extends StatelessWidget {
                                 alignment: Alignment.center,
                                 children: [
                                   TweenAnimationBuilder<double>(
-                                    duration: AppMotion.duration(
-                                      context,
-                                      AppMotion.responsive,
-                                    ),
-                                    curve: AppMotion.standard,
+                                    duration: glass
+                                        ? glassSelectionDuration(context)
+                                        : AppMotion.duration(
+                                            context,
+                                            AppMotion.responsive,
+                                          ),
+                                    curve: glass
+                                        ? glassSelectionCurve
+                                        : AppMotion.standard,
                                     tween: Tween<double>(
                                       end: selection == i ? 1 : 0,
                                     ),
@@ -2528,19 +2638,56 @@ class _MainBottomBar extends StatelessWidget {
                                           offset: Offset(0, -value),
                                           child: Transform.scale(
                                             scale: 1 + value * 0.08,
-                                            child: AppIcon(
-                                              glass && selection == i
-                                                  ? items[i].selectedIcon
-                                                  : items[i].icon,
-                                              size: 24,
-                                              color: Color.lerp(
-                                                glass
-                                                    ? c.textPrimary
-                                                    : c.textTertiary,
-                                                AppTheme.brand,
-                                                value,
-                                              ),
-                                            ),
+                                            // The glyph swap is a crossfade,
+                                            // not a one-frame silhouette
+                                            // pop: the solid icon used to
+                                            // appear while the capsule was
+                                            // still travelling, so the bar
+                                            // showed a filled tab with no
+                                            // selection under it.
+                                            child: glass
+                                                ? AnimatedSwitcher(
+                                                    duration:
+                                                        glassSelectionDuration(
+                                                          context,
+                                                        ),
+                                                    switchInCurve:
+                                                        glassSelectionCurve,
+                                                    switchOutCurve:
+                                                        glassSelectionCurve,
+                                                    child: AppIcon(
+                                                      key: ValueKey(
+                                                        selection == i,
+                                                      ),
+                                                      selection == i
+                                                          ? items[i]
+                                                                .selectedIcon
+                                                          : items[i].icon,
+                                                      size: 24,
+                                                      color: Color.lerp(
+                                                        c.textPrimary,
+                                                        AppTheme.brand,
+                                                        value,
+                                                      ),
+                                                    ),
+                                                  )
+                                                : AppIcon(
+                                                    // The picked tab fills in
+                                                    // on every host, glass or
+                                                    // not: the outline glyph is
+                                                    // the quiet state, the
+                                                    // solid one the selected
+                                                    // state.
+                                                    selection == i
+                                                        ? items[i].selectedIcon
+                                                        : items[i].icon,
+                                                    size: 24,
+                                                    color: Color.lerp(
+                                                      c.textTertiary,
+                                                      AppTheme.brand,
+                                                      value,
+                                                    ),
+                                                  ),
                                           ),
                                         ),
                                   ),
@@ -2556,18 +2703,22 @@ class _MainBottomBar extends StatelessWidget {
                                 ],
                               ),
                             ),
-                            // The glass row is icon-only: the label line and its
-                            // gutter are dropped, and the icon stays centred in
-                            // the slot. Every other target keeps the classic
-                            // icon + label column untouched.
-                            if (!glass) ...[
+                            // The phone's glass row carries the tab's name the
+                            // same way the classic bar does; only the split
+                            // shell's sidebar column drops the line and its
+                            // gutter, leaving the icon centred in the slot.
+                            if (drawsTabLabel) ...[
                               const SizedBox(height: 2),
                               AnimatedDefaultTextStyle(
-                                duration: AppMotion.duration(
-                                  context,
-                                  AppMotion.responsive,
-                                ),
-                                curve: AppMotion.standard,
+                                duration: glass
+                                    ? glassSelectionDuration(context)
+                                    : AppMotion.duration(
+                                        context,
+                                        AppMotion.responsive,
+                                      ),
+                                curve: glass
+                                    ? glassSelectionCurve
+                                    : AppMotion.standard,
                                 style: TextStyle(
                                   fontSize: _labelSize,
                                   fontWeight: selection == i

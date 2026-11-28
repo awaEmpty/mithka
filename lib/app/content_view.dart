@@ -7,58 +7,136 @@
 
 import 'dart:async';
 import 'dart:io';
-
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-
 import '../auth/account_store.dart';
 import '../auth/auth_manager.dart';
 import '../auth/login_view.dart';
-import '../chat/custom_emoji.dart';
-import '../chat/link_handler.dart';
+import '../chat/links_search/link_handler.dart';
+import '../chat/stickers/custom_emoji.dart';
 import '../chats/search_view.dart';
 import '../components/app_icons.dart';
 import '../components/app_interactive_surface.dart';
+import '../components/brand_mark.dart';
 import '../l10n/app_localizations.dart';
 import '../platform/adaptive_platform.dart';
 import '../profile/emoji_status_picker.dart';
+import '../settings/appearance/app_icon_controller.dart';
 import '../settings/desktop_hotkey_controller.dart';
+import '../theme/app_motion.dart';
 import '../theme/app_theme.dart';
 import '../theme/theme_controller.dart';
+import 'account_picker_sheet.dart';
 import 'active_conversation.dart';
 import 'app_navigator.dart';
-import 'desktop_chat_list_title_bar_anchors.dart';
-import 'desktop_utility_window.dart';
-import 'desktop_window_controls.dart';
-import 'macos_desktop_title_bar.dart';
+import 'desktop/desktop_chat_list_title_bar_anchors.dart';
+import 'desktop/desktop_utility_window.dart';
+import 'desktop/desktop_window_controls.dart';
+import 'desktop/macos_desktop_title_bar.dart';
 import 'main_tab_view.dart';
 
 Key desktopPrimaryWindowIdentityKey(int accountSlot, int? accountUserId) =>
     ValueKey(('desktop-primary-window', accountSlot, accountUserId));
 
-class ContentView extends StatelessWidget {
+/// Pure decision logic for the auth gate's surface switch, extracted so the
+/// animation contract is unit-testable without the full provider tree.
+abstract final class AuthGateTracker {
+  /// Whether [step] maps to the login surface (anything that is neither the
+  /// ready sidebar, the cold-start splash, nor the logout interstitial).
+  static bool sawLoginSurface(AuthStep step) =>
+      step is! AuthReady &&
+      step is! AuthInitializing &&
+      step is! AuthLoggingOut;
+
+  /// Whether the gate animates the transition onto [step]: every departure
+  /// from a non-ready surface crossfades, EXCEPT a cold start landing on the
+  /// sidebar straight from the splash — that first main build stays a jump
+  /// cut because animating it rasterises the launch's most expensive frame.
+  /// A login → ready hand-off (login WAS on screen) always animates.
+  static bool animates(AuthStep step, {required bool seenLoginSurface}) {
+    if (step is! AuthReady) return true;
+    return seenLoginSurface;
+  }
+}
+
+bool gateAnimatesHandOff(AuthStep step, {required bool seenLoginSurface}) =>
+    AuthGateTracker.animates(step, seenLoginSurface: seenLoginSurface);
+
+class ContentView extends StatefulWidget {
   const ContentView({super.key});
+
+  @override
+  State<ContentView> createState() => _ContentViewState();
+}
+
+class _ContentViewState extends State<ContentView> {
+  bool _seenLoginSurface = false;
+  bool _showedReadySurface = false;
 
   @override
   Widget build(BuildContext context) {
     final step = context.watch<AuthManager>().step;
+    final account = context.watch<AccountStore>();
+    final readyDuringReload =
+        step is AuthReloading &&
+        !account.hasPendingAdd &&
+        account.activeUserId != null;
+    final showsReadySurface = step is AuthReady || readyDuringReload;
+    // Only a login → main hand-off earns the crossfade: a login-family step
+    // was on screen and then auth completed. A cold start goes splash → main
+    // without ever showing login, keeping its deliberate jump cut. A switch
+    // between two READY surfaces (sidebar account switch) is a jump cut too:
+    // cross-fading two full shells left elements of both accounts stacked
+    // for 250 ms — the flicker the switcher showed.
+    final animated =
+        !(showsReadySurface && _showedReadySurface) &&
+        gateAnimatesHandOff(step, seenLoginSurface: _seenLoginSurface);
+    _seenLoginSurface = AuthGateTracker.sawLoginSurface(step);
+    _showedReadySurface = showsReadySurface;
+    // The account identity gates what the ready surface shows (and the
+    // upstream shell keys on it via main.dart's KeyedSubtree); rebinding the
+    // ready surface per identity keeps its inner state scoped to one account
+    // WITHOUT tearing down this gate — the AnimatedSwitcher below must
+    // survive the slot change to crossfade the add-account hand-off.
+    final Widget readyChild = KeyedSubtree(
+      key: ValueKey((account.activeSlot, account.activeUserId)),
+      child: const MainTabView(),
+    );
     final Widget child = switch (step) {
-      AuthReady() => const MainTabView(),
+      AuthReady() => readyChild,
+      // A reload of an ALREADY-SIGNED-IN account (account switch, cancel of a
+      // pending add) is not a form change: TDLib is re-reading the same
+      // ready client. Painting LoginView for those frames flashed the phone
+      // form (and tore the shell down) on every sidebar switch. Keep the
+      // ready surface; an add-account reload has a pending slot and falls
+      // through to the login surface as before.
+      AuthReloading() when readyDuringReload => readyChild,
       // A real cold start (and a logout) paints the splash. AuthReloading is a
       // re-read of an already-running client — account switch or add account —
       // and the login surface is what the user asked for, so it stays on screen.
       AuthInitializing() || AuthLoggingOut() => const SplashView(),
       _ => const LoginView(),
     };
-    // Entering MainTabView is the one edge where the crossfade lands on the
-    // frames that inflate the tab stack and the first chat rows; wrapping that
-    // in a full-viewport opacity layer for 250 ms is the most expensive
-    // rasterisation of the launch. Splash <-> login still crossfades.
+    // A cold start lands on MainTabView while the launch rasterises its first
+    // frames; wrapping that in a full-viewport opacity layer for 250 ms is the
+    // most expensive rasterisation of the launch, so it stays a jump cut. The
+    // login ⇄ sidebar edge is a user-paced switch (login completing, logout,
+    // account add) with no first-frame cost: there the surfaces crossfade so
+    // the hand-off does not feel like a hard cut.
+
     final content = AnimatedSwitcher(
-      duration: child is MainTabView
-          ? Duration.zero
-          : const Duration(milliseconds: 250),
+      duration: animated
+          ? AppMotion.duration(context, AppMotion.deliberate)
+          : Duration.zero,
+      switchInCurve: AppMotion.standard,
+      switchOutCurve: AppMotion.standard,
+      transitionBuilder: (child, animation) =>
+          FadeTransition(opacity: animation, child: child),
+      // Keyed on the surface type, not the account identity: an add-account
+      // slot change rekeys the READY child above while the gate itself keeps
+      // its state, so login → (new account's) ready still crossfades through
+      // this switcher instead of the whole subtree being replaced upstream.
       child: KeyedSubtree(key: ValueKey(child.runtimeType), child: child),
     );
     return content;
@@ -110,6 +188,7 @@ class _DesktopPrimaryWindowFrameState extends State<DesktopPrimaryWindowFrame> {
   Timer? _profileDismissTimer;
   DesktopHotkeyRegistration? _focusSearchRegistration;
   bool _profileVisible = false;
+  bool _accountPickerVisible = false;
   bool _statusPickerVisible = false;
   NavigatorState? _statusPickerNavigator;
 
@@ -195,12 +274,19 @@ class _DesktopPrimaryWindowFrameState extends State<DesktopPrimaryWindowFrame> {
 
   void _showProfile() {
     _profileDismissTimer?.cancel();
-    if (!widget.accountReady || _profileVisible || _statusPickerVisible) return;
+    if (!widget.accountReady ||
+        _profileVisible ||
+        _statusPickerVisible ||
+        _accountPickerVisible) {
+      return;
+    }
     setState(() => _profileVisible = true);
   }
 
   Future<void> _showStatusPicker(int currentStatusId) async {
-    if (!widget.accountReady || _statusPickerVisible) return;
+    if (!widget.accountReady || _statusPickerVisible || _accountPickerVisible) {
+      return;
+    }
     // This frame is above the app Navigator. Its overlay supplies a context
     // that can present the picker without replacing the current workspace.
     final navigator =
@@ -249,6 +335,30 @@ class _DesktopPrimaryWindowFrameState extends State<DesktopPrimaryWindowFrame> {
     );
   }
 
+  Future<void> _switchAccount() async {
+    if (!widget.accountReady || _accountPickerVisible) return;
+    _hideProfile();
+    final accounts = context.read<AccountStore?>();
+    final auth = context.read<AuthManager?>();
+    final navigator =
+        appNavigatorKey.currentState ?? Navigator.maybeOf(context);
+    final pickerContext = navigator?.overlay?.context;
+    if (accounts == null || auth == null || pickerContext == null) return;
+    setState(() => _accountPickerVisible = true);
+    try {
+      final slot = await showAccountPickerDialog(
+        pickerContext,
+        accounts: accounts.summaries,
+        activeSlot: accounts.activeSlot,
+        forSwitching: true,
+      );
+      if (!mounted || !widget.accountReady || slot == null) return;
+      accounts.switchTo(slot, auth);
+    } finally {
+      if (mounted) setState(() => _accountPickerVisible = false);
+    }
+  }
+
   void _scheduleProfileDismiss() {
     _profileDismissTimer?.cancel();
     _profileDismissTimer = Timer(_profileDismissDelay, _hideProfile);
@@ -270,7 +380,7 @@ class _DesktopPrimaryWindowFrameState extends State<DesktopPrimaryWindowFrame> {
     final identity = widget.accountName?.trim().isNotEmpty == true
         ? widget.accountName!.trim()
         : activeAccount?.name.trim();
-    final label = identity == null || identity.isEmpty ? 'Mithka' : identity;
+    final label = identity == null || identity.isEmpty ? 'Mithka X' : identity;
     final phone = widget.accountPhone?.trim().isNotEmpty == true
         ? widget.accountPhone!.trim()
         : activeAccount?.phone.trim();
@@ -281,8 +391,10 @@ class _DesktopPrimaryWindowFrameState extends State<DesktopPrimaryWindowFrame> {
     final canManageProfile =
         widget.accountReady && activeAccount?.isBotApi != true;
     // Emoji statuses are a Premium feature; without it the button could only
-    // open a picker that fails on every choice.
-    final canSetStatus = canManageProfile && activeAccount?.isPremium == true;
+    // open a picker that fails on every choice. premiumForView (not the raw
+    // field) so the self-build local-premium switch unlocks the button too.
+    final canSetStatus =
+        canManageProfile && (activeAccount?.premiumForView ?? false);
     final statusId = activeAccount?.emojiStatusId ?? 0;
     final statusMode = context
         .watch<ThemeController?>()
@@ -406,7 +518,9 @@ class _DesktopPrimaryWindowFrameState extends State<DesktopPrimaryWindowFrame> {
                                 key: const ValueKey('desktop-title-bar-status'),
                                 semanticLabel: AppStringKeys.emojiStatusSetTitle
                                     .l10n(context),
-                                enabled: !_statusPickerVisible,
+                                enabled:
+                                    !_statusPickerVisible &&
+                                    !_accountPickerVisible,
                                 onTap: () =>
                                     unawaited(_showStatusPicker(statusId)),
                                 borderRadius: BorderRadius.circular(
@@ -466,6 +580,9 @@ class _DesktopPrimaryWindowFrameState extends State<DesktopPrimaryWindowFrame> {
                     avatarPath: avatarPath,
                     onEdit: canManageProfile
                         ? () => unawaited(_openEditProfile())
+                        : null,
+                    onSwitchAccount: accounts != null
+                        ? () => unawaited(_switchAccount())
                         : null,
                   ),
                 ),
@@ -621,18 +738,10 @@ class _MacosTitleBarAvatar extends StatelessWidget {
   final String name;
   final double size;
 
-  Widget _fallback() {
+  Widget _fallback(BuildContext context) {
     final trimmedName = name.trim();
-    if (trimmedName.isEmpty || trimmedName == 'Mithka') {
-      // The icon is 1024x1024: 4 MB of RGBA for a 24 pt slot without a decode
-      // hint. Width only, so the square aspect survives.
-      return Image.asset(
-        'assets/app_icon.png',
-        width: size,
-        height: size,
-        cacheWidth: (size * 4).round(),
-        fit: BoxFit.cover,
-      );
+    if (trimmedName.isEmpty || trimmedName == 'Mithka X') {
+      return BrandMark(size: size);
     }
     return Container(
       width: size,
@@ -654,7 +763,7 @@ class _MacosTitleBarAvatar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final path = this.path?.trim();
-    if (path == null || path.isEmpty) return _fallback();
+    if (path == null || path.isEmpty) return _fallback(context);
     return Image.file(
       File(path),
       key: const ValueKey('macos-title-bar-account-avatar-file'),
@@ -665,7 +774,7 @@ class _MacosTitleBarAvatar extends StatelessWidget {
       // against is unchanged.
       cacheWidth: (size * 4).round(),
       fit: BoxFit.cover,
-      errorBuilder: (_, _, _) => _fallback(),
+      errorBuilder: (context, _, _) => _fallback(context),
     );
   }
 }
@@ -676,12 +785,14 @@ class _DesktopTitleBarProfilePopup extends StatelessWidget {
     required this.phone,
     required this.avatarPath,
     required this.onEdit,
+    required this.onSwitchAccount,
   });
 
   final String name;
   final String? phone;
   final String? avatarPath;
   final VoidCallback? onEdit;
+  final VoidCallback? onSwitchAccount;
 
   @override
   Widget build(BuildContext context) {
@@ -756,67 +867,174 @@ class _DesktopTitleBarProfilePopup extends StatelessWidget {
           ),
           if (onEdit != null) ...[
             const SizedBox(height: 12),
-            AppInteractiveSurface(
+            _action(
+              context,
               key: const ValueKey('desktop-title-bar-profile-edit'),
-              semanticLabel: AppStringKeys.editProfileTitle.l10n(context),
-              onTap: onEdit,
-              borderRadius: BorderRadius.circular(AppRadius.md),
-              child: Container(
-                height: 32,
-                decoration: BoxDecoration(
-                  color: c.searchFill,
-                  borderRadius: BorderRadius.circular(AppRadius.md),
-                ),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    AppIcon(HeroAppIcons.pen, size: 16, color: c.linkBlue),
-                    const SizedBox(width: 6),
-                    Text(
-                      AppStringKeys.editProfileTitle.l10n(context),
-                      style: TextStyle(
-                        color: c.linkBlue,
-                        fontSize: 13,
-                        fontWeight: FontWeight.w500,
-                        decoration: TextDecoration.none,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
+              label: AppStringKeys.editProfileTitle.l10n(context),
+              icon: HeroAppIcons.pen,
+              onTap: onEdit!,
+            ),
+          ],
+          if (onSwitchAccount != null) ...[
+            SizedBox(height: onEdit != null ? 6 : 12),
+            _action(
+              context,
+              key: const ValueKey('desktop-title-bar-profile-switch-account'),
+              label: AppStringKeys.loginSwitchAccount.l10n(context),
+              icon: HeroAppIcons.arrowsRightLeft,
+              onTap: onSwitchAccount!,
             ),
           ],
         ],
       ),
     );
   }
+
+  Widget _action(
+    BuildContext context, {
+    required Key key,
+    required String label,
+    required AppIconData icon,
+    required VoidCallback onTap,
+  }) {
+    final c = context.colors;
+    return AppInteractiveSurface(
+      key: key,
+      semanticLabel: label,
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(AppRadius.md),
+      child: Container(
+        height: 32,
+        padding: const EdgeInsets.symmetric(horizontal: 10),
+        decoration: BoxDecoration(
+          color: c.searchFill,
+          borderRadius: BorderRadius.circular(AppRadius.md),
+        ),
+        child: Row(
+          children: [
+            AppIcon(icon, size: 16, color: c.linkBlue),
+            const SizedBox(width: 6),
+            Text(
+              label,
+              style: TextStyle(
+                color: c.linkBlue,
+                fontSize: 13,
+                fontWeight: FontWeight.w500,
+                decoration: TextDecoration.none,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 }
 
+/// The screen shown while the session starts.
+///
+/// The shipped default keeps the brand gradient with the mark, which is what
+/// Mithka X opens with. Any other chosen icon is drawn the way the icon picker
+/// draws it, centred on the app background over a 24 pt spinner in the
+/// tertiary text colour: a standard icon as a 160 pt tile with 36 pt corners,
+/// a penguin as its 192 pt background-free art. Android 12+ opens the app with
+/// the chosen icon on that same background.
 class SplashView extends StatelessWidget {
   const SplashView({super.key});
 
+  /// The icon the user chose, or null for the shipped default (and before any
+  /// choice is known, or where no icon controller is provided).
+  static AppIconVariant? _chosenIcon(BuildContext context) {
+    final AppIconVariant? current;
+    try {
+      current = context.select<AppIconController, AppIconVariant?>(
+        (icons) => icons.currentVariant,
+      );
+    } on ProviderNotFoundException {
+      return null;
+    }
+    // Upstream's defaultIcon and MithkaX's own shipped mark both draw the
+    // brand screen; only an icon chosen away from them is drawn as itself.
+    return current == null ||
+            current == AppIconVariant.defaultIcon ||
+            current == AppIconVariant.mithkaxDefault
+        ? null
+        : current;
+  }
+
   @override
   Widget build(BuildContext context) {
+    final chosen = _chosenIcon(context);
+    if (chosen != null) return _chosenIconSplash(context, chosen);
     return DecoratedBox(
       decoration: BoxDecoration(gradient: AppTheme.brandGradient),
-      child: const Center(
+      child: Center(
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            // The asset is 1254x1254 and would otherwise decode at full size
-            // (6.3 MB of RGBA) for a 192 pt slot. Width only keeps it square.
-            Image(
-              image: ResizeImage(AssetImage('assets/penguin.png'), width: 576),
-              width: AppMetric.splashPenguinSize,
-              height: AppMetric.splashPenguinSize,
+            // The mark sits on the brand gradient, so it keeps the pale end
+            // of the ladder in either appearance — a brand-coloured fill on a
+            // brand-coloured page would vanish.
+            BrandMark(
+              size: AppMetric.splashMarkSize,
+              colors: brandMarkColors(Brightness.dark),
             ),
-            SizedBox(height: AppSpacing.lg + AppSpacing.sm),
-            SizedBox(
+            const SizedBox(height: AppSpacing.lg + AppSpacing.sm),
+            const SizedBox(
               width: AppMetric.splashSpinnerSize,
               height: AppMetric.splashSpinnerSize,
               child: CircularProgressIndicator(
                 strokeWidth: 2.5,
                 valueColor: AlwaysStoppedAnimation(Colors.white),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _chosenIconSplash(BuildContext context, AppIconVariant icon) {
+    final c = context.colors;
+    final brightness = Theme.of(context).brightness;
+    final pixelArt = icon.freeMotif == AppIconFreeMotif.pixelPenguin;
+    // Only the picker artwork ships on every platform; the full launcher PNGs
+    // are bundled for the macOS Dock alone. It is 256 px, so it decodes as is:
+    // upscaling it at decode time would blur the pixel penguin's edges.
+    final Widget art = icon.isStandard
+        ? ClipRRect(
+            borderRadius: BorderRadius.circular(AppMetric.splashIconRadius),
+            child: Image.asset(
+              icon.standardPickerAsset(brightness),
+              width: AppMetric.splashIconSize,
+              height: AppMetric.splashIconSize,
+              fit: BoxFit.cover,
+              filterQuality: pixelArt
+                  ? FilterQuality.none
+                  : FilterQuality.medium,
+            ),
+          )
+        // Penguins and the retired icons have background-free art, drawn at
+        // the default penguin's 192 pt.
+        : Image.asset(
+            icon.pickerAsset,
+            width: AppMetric.splashMarkSize,
+            height: AppMetric.splashMarkSize,
+            fit: BoxFit.contain,
+          );
+    return ColoredBox(
+      color: c.background,
+      child: Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            KeyedSubtree(key: ValueKey('splash-icon-${icon.key}'), child: art),
+            const SizedBox(height: AppSpacing.lg + AppSpacing.sm),
+            SizedBox(
+              width: AppMetric.splashSpinnerSize,
+              height: AppMetric.splashSpinnerSize,
+              child: CircularProgressIndicator(
+                strokeWidth: 2.5,
+                valueColor: AlwaysStoppedAnimation(c.textTertiary),
               ),
             ),
           ],

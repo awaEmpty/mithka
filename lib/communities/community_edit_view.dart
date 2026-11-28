@@ -20,10 +20,8 @@
 //
 
 import 'dart:io';
-
 import 'package:flutter/material.dart';
-
-import '../chat/image_edit_view.dart';
+import '../chat/media/image_edit_view.dart';
 import '../components/app_icons.dart';
 import '../components/app_interactive_surface.dart';
 import '../components/photo_avatar.dart';
@@ -31,7 +29,7 @@ import '../components/toast.dart';
 import '../components/ui_components.dart';
 import '../l10n/app_localizations.dart';
 import '../media/app_asset_picker.dart';
-import '../settings/edit_field_view.dart';
+import '../settings/profile_account/edit_field_view.dart';
 import '../tdlib/td_client.dart';
 import '../theme/app_theme.dart';
 import 'community_models.dart';
@@ -52,8 +50,7 @@ class CommunityEditView extends StatefulWidget {
 
   /// Live foreground-account probes. Production reads TdClient.shared; the
   /// recording-transport test harness cannot switch that shared client under
-  /// a configured proxy, so tests inject a mutable source instead (the same
-  /// seam AppearancePreviewRepository uses for its switch-race tests).
+  /// a configured proxy, so tests inject a mutable source instead.
   @visibleForTesting
   final int Function()? activeClientId;
   @visibleForTesting

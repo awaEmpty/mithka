@@ -1,20 +1,20 @@
 //
 //  about_view.dart
 //
-//  关于 — app identity (penguin icon, name, version) plus tappable links
+//  关于 — app identity (mark, name, version) plus tappable links
 //  that resolve through the shared link handler.
 //
 
 import 'dart:async';
-
 import 'package:flutter/material.dart';
 import 'package:mithka/l10n/app_localizations.dart';
 import 'package:provider/provider.dart';
-
+import 'package:shared_preferences/shared_preferences.dart';
 import '../app/app_version.dart';
 import '../app/telemetry_config.dart';
-import '../chat/link_handler.dart';
+import '../chat/links_search/link_handler.dart';
 import '../components/app_icons.dart';
+import '../components/brand_mark.dart';
 import '../components/toast.dart';
 import '../components/ui_components.dart';
 import '../theme/app_theme.dart';
@@ -32,14 +32,40 @@ class AboutView extends StatefulWidget {
 }
 
 class _AboutViewState extends State<AboutView> {
-  static const _websiteUrl = 'https://mithka.ieb.app';
-  static const _channelUrl = 'https://t.me/mithka';
-  static const _githubUrl = 'https://github.com/iebb/mithka';
+  static const _channelUrl = 'https://t.me/MithkaX';
+  static const _communityUrl = 'https://t.me/mithka';
+  static const _githubUrl = 'https://github.com/TiaraBasori/MithkaX';
   late final Future<AppVersion> _versionFuture = AppVersion.load();
   int _versionTapCount = 0;
   DateTime? _lastVersionTapAt;
   bool _checking = false;
   UpdateCheckOutcome? _updateOutcome;
+
+  /// Whether the update check also follows pre-release builds. Read from the
+  /// same preference the checker consults, so the row always shows the value
+  /// the next check will use.
+  bool _includePrereleases = false;
+
+  @override
+  void initState() {
+    super.initState();
+    unawaited(_loadUpdatePreferences());
+  }
+
+  Future<void> _loadUpdatePreferences() async {
+    final prefs = await SharedPreferences.getInstance();
+    if (!mounted) return;
+    setState(() {
+      _includePrereleases =
+          prefs.getBool(UpdateChecker.includePrereleasesKey) ?? false;
+    });
+  }
+
+  Future<void> _setIncludePrereleases(bool value) async {
+    setState(() => _includePrereleases = value);
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(UpdateChecker.includePrereleasesKey, value);
+  }
 
   /// Trailing text on the update row: the last outcome, or nothing yet.
   String _updateStatusLabel() {
@@ -100,38 +126,28 @@ class _AboutViewState extends State<AboutView> {
           Center(
             child: Column(
               children: [
-                Container(
-                  width: 84,
-                  height: 84,
-                  decoration: BoxDecoration(
-                    gradient: AppTheme.brandGradient,
-                    borderRadius: BorderRadius.circular(AppRadius.xl),
-                  ),
-                  child: const Padding(
-                    padding: EdgeInsets.all(10),
-                    child: Image(
-                      image: AssetImage('assets/penguin.png'),
-                      fit: BoxFit.contain,
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 14),
+                // No tile behind the mark: it is the identity, drawn large
+                // on its own instead of framed in a rounded box. The painter
+                // hugs the glyph, so the name sits a token's gap below the ink
+                // rather than below an empty canvas margin.
+                BrandMark.ink(ink: 84),
+                const SizedBox(height: AppSpacing.md),
                 Text(
-                  'Mithka',
+                  'Mithka X',
                   style: TextStyle(
-                    fontSize: 22,
+                    fontSize: AppTextSize.display,
                     fontWeight: FontWeight.w600,
                     color: c.textPrimary,
                   ),
                 ),
-                const SizedBox(height: 4),
+                const SizedBox(height: AppSpacing.xxs),
                 GestureDetector(
                   behavior: HitTestBehavior.opaque,
                   onTap: () => unawaited(_handleVersionTap()),
                   child: Padding(
                     padding: const EdgeInsets.symmetric(
-                      horizontal: 12,
-                      vertical: 6,
+                      horizontal: AppSpacing.lg,
+                      vertical: AppSpacing.xs,
                     ),
                     child: FutureBuilder<AppVersion>(
                       future: _versionFuture,
@@ -141,8 +157,9 @@ class _AboutViewState extends State<AboutView> {
                           AppStrings.t(AppStringKeys.aboutVersion, {
                             'value1': version,
                           }),
+                          key: const ValueKey('about-version'),
                           style: TextStyle(
-                            fontSize: 13,
+                            fontSize: AppTextSize.footnote,
                             color: c.textSecondary,
                           ),
                         );
@@ -153,10 +170,30 @@ class _AboutViewState extends State<AboutView> {
               ],
             ),
           ),
-          const SizedBox(height: 30),
+          const SizedBox(height: AppSpacing.lg),
           SettingsCard.rows(
             rows: [
               if (UpdateChecker.supportsManualCheck) ...[
+                // The pre-release opt-in sits directly above the check row:
+                // it decides what that row (and the launch check) may find.
+                SettingsRow(
+                  key: const ValueKey('about-update-prereleases'),
+                  leading: const SettingsLeadingIcon(
+                    icon: HeroAppIcons.droplet,
+                  ),
+                  title: AppStrings.t(AppStringKeys.aboutUpdatePrereleases),
+                  subtitle: AppStrings.t(
+                    AppStringKeys.aboutUpdatePrereleasesDetail,
+                  ),
+                  showChevron: false,
+                  trailing: AppCheckbox(
+                    value: _includePrereleases,
+                    onChanged: (value) =>
+                        unawaited(_setIncludePrereleases(value)),
+                  ),
+                  onTap: () =>
+                      unawaited(_setIncludePrereleases(!_includePrereleases)),
+                ),
                 SettingsRow(
                   leading: const SettingsLeadingIcon(
                     icon: HeroAppIcons.download,
@@ -172,7 +209,9 @@ class _AboutViewState extends State<AboutView> {
                     icon: HeroAppIcons.comments,
                   ),
                   title: AppStrings.t(AppStringKeys.aboutReportProblem),
-                  value: AppStrings.t(AppStringKeys.aboutReportProblemDetail),
+                  subtitle: AppStrings.t(
+                    AppStringKeys.aboutReportProblemDetail,
+                  ),
                   onTap: () => Navigator.of(context).push(
                     MaterialPageRoute(
                       settings: const RouteSettings(name: '/settings/feedback'),
@@ -182,23 +221,20 @@ class _AboutViewState extends State<AboutView> {
                 ),
               ],
               SettingsRow(
-                leading: const SettingsLeadingIcon(icon: HeroAppIcons.globe),
-                title: AppStrings.t(AppStringKeys.aboutWebsite),
-                value: 'mithka.ieb.app',
-                onTap: () => openLink(context, _websiteUrl),
-              ),
-              SettingsRow(
                 leading: const SettingsLeadingIcon(
                   icon: HeroAppIcons.solidPaperPlane,
                 ),
                 title: AppStrings.t(AppStringKeys.aboutTelegramChannel),
-                value: 't.me/mithka',
                 onTap: () => openLink(context, _channelUrl),
+              ),
+              SettingsRow(
+                leading: const SettingsLeadingIcon(icon: HeroAppIcons.users),
+                title: AppStrings.t(AppStringKeys.aboutCommunityChat),
+                onTap: () => openLink(context, _communityUrl),
               ),
               SettingsRow(
                 leading: const SettingsLeadingIcon(icon: HeroAppIcons.code),
                 title: 'GitHub',
-                value: 'github.com/iebb/mithka',
                 onTap: () => openLink(context, _githubUrl),
               ),
             ],

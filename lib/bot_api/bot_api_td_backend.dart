@@ -2,7 +2,6 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math' as math;
-
 import '../tdlib/json_helpers.dart' show jsonDouble, jsonInt;
 import 'bot_api_account.dart';
 import 'bot_api_client.dart';

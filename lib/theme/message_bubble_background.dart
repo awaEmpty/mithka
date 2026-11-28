@@ -1,7 +1,5 @@
 import 'dart:io';
-
 import 'package:flutter/widgets.dart';
-
 import 'custom_message_bubble_background.dart';
 
 /// Selectable chat-message bubble backgrounds.

@@ -1,5 +1,4 @@
 import 'package:flutter/foundation.dart';
-
 import '../tdlib/json_helpers.dart';
 import '../tdlib/td_client.dart';
 
@@ -40,36 +39,6 @@ class PublicDiscoveryService {
     );
     return response.int64Array('chat_ids') ?? const [];
   }
-
-  Future<List<int>> similarChannelIds(int chatId) async {
-    final response = await TdClient.shared.query(similarChatsRequest(chatId));
-    return response.int64Array('chat_ids') ?? const [];
-  }
-
-  Future<List<int>> similarBotUserIds(int botUserId) async {
-    final response = await TdClient.shared.query(similarBotsRequest(botUserId));
-    return response.int64Array('user_ids') ?? const [];
-  }
-
-  Future<void> markSimilarChannelOpened({
-    required int sourceChatId,
-    required int openedChatId,
-  }) => TdClient.shared.query(
-    openSimilarChatRequest(
-      sourceChatId: sourceChatId,
-      openedChatId: openedChatId,
-    ),
-  );
-
-  Future<void> markSimilarBotOpened({
-    required int sourceBotUserId,
-    required int openedBotUserId,
-  }) => TdClient.shared.query(
-    openSimilarBotRequest(
-      sourceBotUserId: sourceBotUserId,
-      openedBotUserId: openedBotUserId,
-    ),
-  );
 
   Future<PublicDiscoveryMessagePage> searchPublicPosts({
     required String query,
@@ -147,38 +116,6 @@ class PublicDiscoveryService {
     '@type': 'searchPublicChats',
     'query': query,
     'type_filter': {'@type': type},
-  };
-
-  @visibleForTesting
-  static Map<String, dynamic> similarChatsRequest(int chatId) => {
-    '@type': 'getChatSimilarChats',
-    'chat_id': chatId,
-  };
-
-  @visibleForTesting
-  static Map<String, dynamic> similarBotsRequest(int botUserId) => {
-    '@type': 'getBotSimilarBots',
-    'bot_user_id': botUserId,
-  };
-
-  @visibleForTesting
-  static Map<String, dynamic> openSimilarChatRequest({
-    required int sourceChatId,
-    required int openedChatId,
-  }) => {
-    '@type': 'openChatSimilarChat',
-    'chat_id': sourceChatId,
-    'opened_chat_id': openedChatId,
-  };
-
-  @visibleForTesting
-  static Map<String, dynamic> openSimilarBotRequest({
-    required int sourceBotUserId,
-    required int openedBotUserId,
-  }) => {
-    '@type': 'openBotSimilarBot',
-    'bot_user_id': sourceBotUserId,
-    'opened_bot_user_id': openedBotUserId,
   };
 
   @visibleForTesting

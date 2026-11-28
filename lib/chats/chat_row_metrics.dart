@@ -1,8 +1,6 @@
 import 'dart:math' as math;
-
 import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
-
 import '../theme/app_theme.dart';
 import '../theme/content_size.dart';
 

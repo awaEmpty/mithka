@@ -1,0 +1,1751 @@
+package x.empty.mithka
+
+import android.app.ActivityManager
+import android.content.ClipData
+import android.content.ClipDescription
+import android.content.ClipboardManager
+import android.content.ComponentName
+import android.content.Context
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.content.res.Configuration
+import android.media.AudioManager
+import android.media.MediaCodec
+import android.media.MediaExtractor
+import android.media.MediaFormat
+import android.media.MediaMetadataRetriever
+import android.media.MediaMuxer
+import android.net.Uri
+import android.os.Build
+import android.os.Bundle
+import android.os.Process
+import android.provider.OpenableColumns
+import android.provider.Settings
+import android.util.Log
+import android.view.DragEvent
+import android.view.WindowManager
+import android.webkit.MimeTypeMap
+import androidx.core.content.FileProvider
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
+import com.iebb.cineplay_pip.FVideoPictureInPicturePlugin
+import com.google.mlkit.common.model.DownloadConditions
+import com.google.mlkit.nl.languageid.LanguageIdentification
+import com.google.mlkit.nl.languageid.LanguageIdentifier
+import com.google.mlkit.nl.translate.TranslateLanguage
+import com.google.mlkit.nl.translate.Translation
+import com.google.mlkit.nl.translate.Translator
+import com.google.mlkit.nl.translate.TranslatorOptions
+import io.flutter.embedding.android.FlutterFragmentActivity
+import io.flutter.embedding.engine.FlutterEngine
+import io.flutter.embedding.engine.plugins.FlutterPlugin
+import io.flutter.plugin.common.MethodChannel
+import java.io.ByteArrayOutputStream
+import java.io.File
+import java.io.FileInputStream
+import java.io.IOException
+import java.nio.ByteBuffer
+import java.util.LinkedHashSet
+import kotlin.math.roundToInt
+import org.xmlpull.v1.XmlPullParser
+import org.xmlpull.v1.XmlPullParserFactory
+
+class MainActivity : FlutterFragmentActivity() {
+    private var webProxyBridge: WebProxyBridge? = null
+    private var callMedia: CallMediaPlugin? = null
+    private var telegramPasskeys: TelegramPasskeyPlugin? = null
+    private var accountBackup: AccountBackupPlugin? = null
+    private var downloadStorage: DownloadStoragePlugin? = null
+    private var mithkaPro: MithkaProPlugin? = null
+    private var nowPlaying: NowPlayingPlugin? = null
+    private var externalLinks: ExternalLinksPlugin? = null
+    private var pushBridge: PushServiceBridge? = null
+    private var haptics: HapticsPlugin? = null
+    private var mediaDropChannel: MethodChannel? = null
+    private var shareIntentChannel: MethodChannel? = null
+    private var shareDeliveryPending = false
+    private var acceptingImageDrop = false
+    private var fullscreenSystemUi = false
+
+    /** Set when the user leaves through Home or Recents, cleared on return. */
+    private var leftByUser = false
+    private val translators = mutableMapOf<String, Translator>()
+    private val languageIdentifierDelegate = lazy<LanguageIdentifier> {
+        LanguageIdentification.getClient()
+    }
+    private val languageIdentifier by languageIdentifierDelegate
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        // The engine outlives the Activity (see CachedEngine), so this may be a
+        // re-attach to a Dart VM that is already running: nothing may be
+        // initialised twice, but this window's intent must still be delivered.
+        val warm = CachedEngine.isWarm
+        // The cached engine has to exist BEFORE the fragment resolves it: with a
+        // cached id the fragment never creates (or destroys) one, which is what
+        // keeps it alive across Activities.
+        CachedEngine.acquire(this)
+        WindowCompat.setDecorFitsSystemWindows(window, false)
+        super.onCreate(savedInstanceState)
+        requestHighestRefreshRate()
+        if (!warm) {
+            incomingSharePayload = parseIncomingShareIntent(intent)
+            PushServiceBridge.captureTap(this, intent)
+        }
+        // Telegram-family self-heal (exteraless LauncherIconController
+        // .tryFixLauncherIconIfNeeded): an app update that removes the alias
+        // the user had chosen can leave EVERY alias disabled — the launcher
+        // then resolves the launch intent against a dead component and the
+        // app vanishes from the home screen. Repair on a background thread
+        // (up to 62 serialized PackageManager reads must never ride the
+        // launch frames).
+        Thread { ensureLauncherAliasEnabled() }.start()
+        if (warm) {
+            // Dart is already running and will never see this Activity's
+            // creation. A deep link, share or notification tap that OPENED this
+            // window has to travel the warm path instead: onNewIntent hands it
+            // to app_links, the share channel and the push bridge.
+            val incoming = intent
+            if (incoming != null && incoming.action != Intent.ACTION_MAIN) {
+                onNewIntent(Intent(incoming))
+            }
+        }
+    }
+
+    private fun ensureLauncherAliasEnabled() {
+        // The common case is answered by ONE binder read: the primordial
+        // manifest-enabled alias still in (or explicitly) its DEFAULT state
+        // resolves as live — either the user never chose an icon, or the
+        // choice was made through this build's own switcher.
+        //
+        // This runs on a bare `Thread`, and Android installs its
+        // KillApplicationHandler as the DEFAULT uncaught-exception handler for
+        // every thread: one RuntimeException out of the PackageManager while
+        // the launcher's PACKAGE_CHANGED storm is still settling kills the
+        // process on the loading page. Repair is best-effort — never fatal.
+        try {
+            val primordialState = packageManager.getComponentEnabledSetting(
+                primordialDefaultAlias,
+            )
+            if (primordialState == PackageManager.COMPONENT_ENABLED_STATE_DEFAULT ||
+                primordialState == PackageManager.COMPONENT_ENABLED_STATE_ENABLED
+            ) {
+                return
+            }
+            for ((_, className) in launcherAliases()) {
+                val state = packageManager.getComponentEnabledSetting(
+                    ComponentName(packageName, className),
+                )
+                if (state == PackageManager.COMPONENT_ENABLED_STATE_ENABLED) {
+                    return
+                }
+            }
+            // Nothing is live: re-root the launcher at the shipped default so this
+            // launch already resolves, and the home screen gets its icon back.
+            packageManager.setComponentEnabledSetting(
+                primordialDefaultAlias,
+                PackageManager.COMPONENT_ENABLED_STATE_ENABLED,
+                PackageManager.DONT_KILL_APP,
+            )
+        } catch (error: Exception) {
+            Log.w("MainActivity", "Could not repair the launcher alias", error)
+        }
+    }
+
+    /// Refreshes the recents/switcher entry so it always shows the app name
+    /// and the current launcher icon. Flutter sets the task description via
+    /// SystemChrome.setApplicationSwitcherDescription with icon=0
+    /// (PlatformPlugin), which wipes the manifest icon; this re-applies the
+    /// icon for the alias that is actually live.
+    ///
+    /// The PackageManager reads live off the main thread: currentLauncherIcon()
+    /// can cost up to 40+ serialized binder reads, and doing them on the UI
+    /// thread during onResume blocks the first Flutter render frame
+    /// (cold-start crash-once after an icon switch).
+    private fun updateTaskDescription() {
+        Thread {
+            // Like ensureLauncherAliasEnabled: this thread's failures must not
+            // reach the default handler — a TaskDescription built while
+            // PackageManager is busy is not worth a process death.
+            try {
+                val current = currentLauncherIcon()
+                // Resource names cannot carry '-'; catalogued keys such as
+                // `ice-cream` ship as `ic_launcher_ice_cream`, so a raw
+                // interpolation answers 0 and the recents entry gets an icon
+                // resource of id 0 instead of the mark.
+                val resName = if (current == "default") {
+                    "ic_launcher"
+                } else {
+                    "ic_launcher_" + current.replace('-', '_')
+                }
+                val iconRes = resources.getIdentifier(resName, "mipmap", packageName)
+                runOnUiThread {
+                    val taskDescription =
+                        android.app.ActivityManager.TaskDescription("Mithka X", iconRes, 0)
+                    setTaskDescription(taskDescription)
+                }
+            } catch (error: Exception) {
+                Log.w("MainActivity", "Could not refresh the task description", error)
+            }
+        }.start()
+    }
+
+    /**
+     * Some 90/120 Hz phones hold an app at 60 Hz unless its window asks for
+     * more. Prefer the fastest mode at the resolution already in use, so the
+     * request never changes the panel's resolution. The system still lowers
+     * the rate on its own in battery saver.
+     */
+    private fun requestHighestRefreshRate() {
+        try {
+            @Suppress("DEPRECATION")
+            val display = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                display
+            } else {
+                windowManager.defaultDisplay
+            } ?: return
+            val current = display.mode
+            val fastest = display.supportedModes
+                .filter {
+                    it.physicalWidth == current.physicalWidth &&
+                        it.physicalHeight == current.physicalHeight
+                }
+                .maxByOrNull { it.refreshRate } ?: return
+            if (fastest.refreshRate <= current.refreshRate + 0.5f) return
+            val attributes = window.attributes
+            attributes.preferredDisplayModeId = fastest.modeId
+            window.attributes = attributes
+        } catch (error: Exception) {
+            Log.w("MainActivity", "Could not request a faster display mode", error)
+        }
+    }
+
+    override fun onStart() {
+        super.onStart()
+        FVideoPictureInPicturePlugin.onActivityStarted(this)
+    }
+
+    override fun onResume() {
+        super.onResume()
+        leftByUser = false
+        mithkaPro?.onActivityResumed()
+        FVideoPictureInPicturePlugin.onActivityResumed(this)
+        if (fullscreenSystemUi) applyFullscreenSystemUi()
+        // Flutter sets the task description via SystemChrome.setApplicationSwitcherDescription
+        // with icon=0 (PlatformPlugin), which wipes the manifest icon from the recents view.
+        // Refresh it here so the app always shows its name and current icon in the switcher.
+        updateTaskDescription()
+    }
+
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if (hasFocus && fullscreenSystemUi) applyFullscreenSystemUi()
+    }
+
+    private fun applyFullscreenSystemUi() {
+        val controller = WindowCompat.getInsetsController(window, window.decorView)
+        controller.systemBarsBehavior =
+            WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+        if (fullscreenSystemUi) {
+            controller.hide(WindowInsetsCompat.Type.systemBars())
+        } else {
+            controller.show(WindowInsetsCompat.Type.systemBars())
+        }
+    }
+
+    override fun onPause() {
+        mithkaPro?.onActivityPaused()
+        FVideoPictureInPicturePlugin.onActivityPaused(this)
+        super.onPause()
+    }
+
+    override fun onStop() {
+        FVideoPictureInPicturePlugin.onActivityStopped(this)
+        super.onStop()
+        // The user went Home or to Recents (a floating video only stops here
+        // once it is dismissed): nothing of this window is on screen, so a
+        // deferred icon switch can retire it now.
+        if (leftByUser && !isInPictureInPictureMode && !isChangingConfigurations) {
+            applyPendingLauncherIcon(closeTask = true)
+        }
+    }
+
+    override fun onUserLeaveHint() {
+        super.onUserLeaveHint()
+        leftByUser = true
+        FVideoPictureInPicturePlugin.onUserLeaveHint(this)
+    }
+
+    @android.annotation.TargetApi(Build.VERSION_CODES.R)
+    override fun onPictureInPictureRequested(): Boolean =
+        FVideoPictureInPicturePlugin.onPictureInPictureRequested(this) ||
+            super.onPictureInPictureRequested()
+
+    override fun onPictureInPictureModeChanged(
+        isInPictureInPictureMode: Boolean,
+        newConfig: Configuration,
+    ) {
+        super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
+        FVideoPictureInPicturePlugin.onPictureInPictureModeChanged(
+            this,
+            isInPictureInPictureMode,
+            newConfig,
+        )
+    }
+
+    /** Flutter's supported way to keep one engine for the whole process. */
+    override fun getCachedEngineId(): String = CachedEngine.ID
+
+    override fun shouldDestroyEngineWithHost(): Boolean = false
+
+    override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
+        // This runs on EVERY attach, and with a cached engine that is no longer
+        // the same thing as a new engine: the FlutterEngine, its plugins and
+        // Dart symbols must be set up once per engine, while the channels below
+        // capture this Activity and are re-registered on each attach.
+        //
+        // `flutterEngineOrdinal` therefore counts ENGINES, not attachments. It
+        // stays 1 for the whole process now; Dart's re-entry reclaim only ever
+        // fires if someone reverts to a per-Activity engine.
+        if (configuredEngine !== flutterEngine) {
+            configuredEngine = flutterEngine
+            flutterEngineOrdinal += 1
+            registerPlugins(flutterEngine)
+        }
+        CachedEngine.noteAttach()
+        webProxyBridge = WebProxyBridge(this, flutterEngine.dartExecutor.binaryMessenger)
+        pushBridge = PushServiceBridge(
+            this,
+            flutterEngine.dartExecutor.binaryMessenger,
+        )
+        // Re-created per attach: the tick is drawn on THIS window's decor view.
+        haptics?.dispose()
+        haptics = HapticsPlugin(this, flutterEngine.dartExecutor.binaryMessenger)
+        downloadStorage = DownloadStoragePlugin(
+            this,
+            flutterEngine.dartExecutor.binaryMessenger,
+        )
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "mithka/fullscreen_system_ui")
+            .setMethodCallHandler { call, result ->
+                if (call.method == "setFullscreen") {
+                    fullscreenSystemUi = call.arguments == true
+                    applyFullscreenSystemUi()
+                    result.success(null)
+                } else {
+                    result.notImplemented()
+                }
+            }
+        configureShareIntentChannel(flutterEngine)
+        telegramPasskeys = TelegramPasskeyPlugin(
+            this,
+            flutterEngine.dartExecutor.binaryMessenger,
+        )
+        accountBackup = AccountBackupPlugin(
+            applicationContext,
+            flutterEngine.dartExecutor.binaryMessenger,
+        )
+        mithkaPro = MithkaProPlugin(
+            this,
+            flutterEngine.dartExecutor.binaryMessenger,
+        )
+        nowPlaying = NowPlayingPlugin(
+            applicationContext,
+            flutterEngine.dartExecutor.binaryMessenger,
+        )
+        externalLinks = ExternalLinksPlugin(
+            this,
+            flutterEngine.dartExecutor.binaryMessenger,
+        )
+        val plugin = CallMediaPlugin(
+            applicationContext,
+            flutterEngine.dartExecutor.binaryMessenger,
+        )
+        callMedia = plugin
+        // Embed call video surfaces (TextureViewRenderer) into the widget tree.
+        flutterEngine.platformViewsController.registry
+            .registerViewFactory("mithka/video_view", VideoViewFactory(plugin))
+
+        // App info for the GitHub-release update checker: the device's supported
+        // ABIs (preference-ordered, so we can match the right per-ABI APK asset)
+        // and the installed version name (the semver compared to the latest tag).
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "mithka/app_info")
+            .setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "info" -> {
+                        val pkg = packageManager.getPackageInfo(packageName, 0)
+                        result.success(
+                            mapOf(
+                                "abis" to Build.SUPPORTED_ABIS.toList(),
+                                "version" to (pkg.versionName ?: ""),
+                                "sdkInt" to Build.VERSION.SDK_INT,
+                                "manufacturer" to Build.MANUFACTURER,
+                                "model" to Build.MODEL,
+                                "hardware" to Build.HARDWARE,
+                            ),
+                        )
+                    }
+                    // 1 = this process has never hosted a FlutterEngine before.
+                    // Dart reclaims a previous engine's native TDLib clients
+                    // only when this answers 2 or more AND the owning activity
+                    // has actually been destroyed.
+                    "engineState" -> result.success(
+                        mapOf(
+                            "ordinal" to flutterEngineOrdinal,
+                            "destroyedOrdinal" to flutterEngineDestroyedOrdinal,
+                        ),
+                    )
+                    "engineOrdinal" -> result.success(flutterEngineOrdinal)
+                    else -> result.notImplemented()
+                }
+            }
+
+        MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            "mithka/firebase_configuration",
+        ).setMethodCallHandler { call, result ->
+            if (call.method != "isAvailable") {
+                result.notImplemented()
+                return@setMethodCallHandler
+            }
+            val appIdResource = resources.getIdentifier("google_app_id", "string", packageName)
+            val appId = if (appIdResource == 0) "" else getString(appIdResource)
+            result.success(appId.isNotBlank())
+        }
+
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "mithka/app_icon")
+            .setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "isSupported" -> result.success(true)
+                    // Up to 61 serialized PackageManager binder reads; on the
+                    // cold start right after the first icon switch these land
+                    // while PackageManager is still churning through the 60
+                    // component-state writes and their PACKAGE_CHANGED
+                    // broadcasts, which froze the loading page's main thread
+                    // until ANR (crash-once-then-fine). Off the main thread,
+                    // the loading page keeps painting and the Dart future just
+                    // resolves a few ms later.
+                    "currentIcon" -> Thread {
+                        try {
+                            val current = currentLauncherIcon()
+                            runOnUiThread { result.success(current) }
+                        } catch (e: Exception) {
+                            runOnUiThread {
+                                result.error(
+                                    "app_icon_failed",
+                                    e.localizedMessage,
+                                    null,
+                                )
+                            }
+                        }
+                    }.start()
+                    "setIcon" -> {
+                        val args = call.arguments as? Map<*, *>
+                        val name = args?.get("name") as? String ?: "default"
+                        // launcherAliases() is the single source of truth
+                        // for "an icon that exists": keying this gate off it
+                        // keeps a newly catalogued icon switchable. A second,
+                        // hand-maintained key list once held the twelve
+                        // standard marks and the 48 penguins but not the
+                        // fork's own two marks, so every tap on those
+                        // answered "cannot change the app icon"
+                        // (invalid_icon) instead of switching. Nothing is
+                        // gated here: every icon ships free in MithkaX.
+                        if (!launcherAliases().containsKey(name)) {
+                            result.error("invalid_icon", "Unknown app icon", null)
+                            return@setMethodCallHandler
+                        }
+                        // All 61 component writes go through the package
+                        // manager's serialized write lock. Doing them on the
+                        // platform main thread freezes every frame while the
+                        // writes land — and, right after the first switch,
+                        // while PACKAGE_CHANGED broadcasts storm every
+                        // launcher. A background thread keeps the switch UI
+                        // (and its result callback) off that lock.
+                        Thread {
+                            try {
+                                setLauncherIcon(name)
+                                runOnUiThread {
+                                    result.success(null)
+                                    // The alias just went live: refresh the recents
+                                    // entry so it shows the new icon immediately.
+                                    updateTaskDescription()
+                                }
+                            } catch (e: Exception) {
+                                runOnUiThread {
+                                    result.error(
+                                        "app_icon_failed",
+                                        e.localizedMessage,
+                                        null,
+                                    )
+                                }
+                            }
+                        }.start()
+                    }
+                    // Dart asks for this right after an icon switch lands: the
+                    // launcher keeps the old entry until the process that
+                    // changed the alias is gone, so the switch ends here.
+                    "quitApp" -> {
+                        result.success(null)
+                        quitAfterIconChange()
+                        return@setMethodCallHandler
+                    }
+                    else -> result.notImplemented()
+                }
+            }
+
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "mithka/native_translation")
+            .setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "capabilities" -> {
+                        result.success(listOf("android_mlkit"))
+                        return@setMethodCallHandler
+                    }
+                    "translate" -> {
+                        translateOnDevice(call.arguments as? Map<*, *>, result)
+                        return@setMethodCallHandler
+                    }
+                    "identifyLanguage" -> {
+                        identifyLanguage(call.arguments as? Map<*, *>, result)
+                        return@setMethodCallHandler
+                    }
+                    else -> {
+                        result.notImplemented()
+                        return@setMethodCallHandler
+                    }
+                }
+            }
+
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "mithka/fonts")
+            .setMethodCallHandler { call, result ->
+                if (call.method == "listFonts") {
+                    result.success(listSystemFonts())
+                } else {
+                    result.notImplemented()
+                }
+            }
+
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "mithka/screen_wakelock")
+            .setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "enable" -> {
+                        runOnUiThread {
+                            window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                        }
+                        result.success(null)
+                    }
+                    "disable" -> {
+                        runOnUiThread {
+                            window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                        }
+                        result.success(null)
+                    }
+                    else -> result.notImplemented()
+                }
+            }
+
+        MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            "mithka/app_lock_privacy",
+        ).setMethodCallHandler { call, result ->
+            if (call.method != "setPrivacyShieldVisible") {
+                result.notImplemented()
+                return@setMethodCallHandler
+            }
+            val visible = call.argument<Boolean>("visible") ?: false
+            runOnUiThread {
+                if (visible) {
+                    window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
+                } else {
+                    window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
+                }
+            }
+            result.success(null)
+        }
+
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "mithka/player_brightness")
+            .setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "get" -> {
+                        val windowValue = window.attributes.screenBrightness
+                        val value = if (windowValue >= 0f) windowValue else {
+                            Settings.System.getInt(
+                                contentResolver,
+                                Settings.System.SCREEN_BRIGHTNESS,
+                                128,
+                            ) / 255f
+                        }
+                        result.success(value.toDouble())
+                    }
+                    "set" -> {
+                        val value = (call.arguments as? Number)?.toFloat()
+                        if (value == null) {
+                            result.error("invalid_brightness", "Expected a numeric value", null)
+                        } else {
+                            runOnUiThread {
+                                val attributes = window.attributes
+                                attributes.screenBrightness = value.coerceIn(0.01f, 1f)
+                                window.attributes = attributes
+                            }
+                            result.success(null)
+                        }
+                    }
+                    "restore" -> {
+                        runOnUiThread {
+                            val attributes = window.attributes
+                            // -1 relinquishes the per-window override and lets
+                            // Android apply the user's system brightness.
+                            attributes.screenBrightness =
+                                WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
+                            window.attributes = attributes
+                        }
+                        result.success(null)
+                    }
+                    else -> result.notImplemented()
+                }
+            }
+
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "mithka/system_media_volume")
+            .setMethodCallHandler { call, result ->
+                val audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
+                when (call.method) {
+                    "get" -> result.success(systemMediaVolumeState(audioManager))
+                    "set" -> {
+                        val requested = (call.arguments as? Number)?.toDouble()
+                        if (requested == null || !requested.isFinite()) {
+                            result.error("invalid_volume", "Expected a finite numeric value", null)
+                            return@setMethodCallHandler
+                        }
+                        if (audioManager.isVolumeFixed) {
+                            result.success(null)
+                            return@setMethodCallHandler
+                        }
+                        val maximum = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
+                        if (maximum <= 0) {
+                            result.success(null)
+                            return@setMethodCallHandler
+                        }
+                        val minimum = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                            audioManager.getStreamMinVolume(AudioManager.STREAM_MUSIC)
+                        } else {
+                            0
+                        }
+                        val index = (requested.coerceIn(0.0, 1.0) * maximum)
+                            .roundToInt()
+                            .coerceIn(minimum, maximum)
+                        try {
+                            audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, index, 0)
+                            result.success(systemMediaVolumeState(audioManager))
+                        } catch (error: SecurityException) {
+                            result.error("volume_change_denied", error.localizedMessage, null)
+                        }
+                    }
+                    else -> result.notImplemented()
+                }
+            }
+
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "mithka/clipboard")
+            .setMethodCallHandler { call, result ->
+                var clipboardDescription: ClipDescription? = null
+                val requestedMimeType: String?
+                if (call.method == "writeImage") {
+                    val bytes = call.arguments as? ByteArray
+                    if (bytes == null || bytes.isEmpty()) {
+                        result.success(false)
+                        return@setMethodCallHandler
+                    }
+                    val mimeType = when {
+                        bytes.size >= 4 && bytes[0] == 0x89.toByte() && bytes[1] == 0x50.toByte() &&
+                            bytes[2] == 0x4E.toByte() && bytes[3] == 0x47.toByte() -> "image/png"
+                        bytes.size >= 4 && bytes[0] == 0x47.toByte() && bytes[1] == 0x49.toByte() &&
+                            bytes[2] == 0x46.toByte() && bytes[3] == 0x38.toByte() -> "image/gif"
+                        bytes.size >= 3 && bytes[0] == 0xFF.toByte() && bytes[1] == 0xD8.toByte() &&
+                            bytes[2] == 0xFF.toByte() -> "image/jpeg"
+                        bytes.size >= 12 && bytes[0] == 0x52.toByte() && bytes[1] == 0x49.toByte() &&
+                            bytes[2] == 0x46.toByte() && bytes[3] == 0x46.toByte() &&
+                            bytes[8] == 0x57.toByte() && bytes[9] == 0x45.toByte() &&
+                            bytes[10] == 0x42.toByte() && bytes[11] == 0x50.toByte() -> "image/webp"
+                        else -> {
+                            result.success(false)
+                            return@setMethodCallHandler
+                        }
+                    }
+                    val clipboard =
+                        getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                    // Android's clipboard has no raw-bytes clip: an image
+                    // must be shared as a content URI other apps can resolve.
+                    // Write the bytes to this app's cache and hand the clip a
+                    // FileProvider URI from the open_filex provider already
+                    // merged into the manifest (it covers cache-path).
+                    val extension = when (mimeType) {
+                        "image/gif" -> "gif"
+                        "image/jpeg" -> "jpg"
+                        "image/webp" -> "webp"
+                        else -> "png"
+                    }
+                    try {
+                        val directory = File(cacheDir, "clipboard")
+                        if (!directory.exists()) directory.mkdirs()
+                        // One image per copy: drop the previous clip's file so
+                        // repeated copies cannot grow the cache without bound.
+                        directory.listFiles()?.forEach { it.delete() }
+                        val file = File(
+                            directory,
+                            "image-${System.currentTimeMillis()}.$extension"
+                        )
+                        file.writeBytes(bytes)
+                        val uri = FileProvider.getUriForFile(
+                            this,
+                            "$packageName.fileProvider.com.crazecoder.openfile",
+                            file
+                        )
+                        clipboard.setPrimaryClip(
+                            ClipData.newUri(contentResolver, mimeType, uri)
+                        )
+                        result.success(true)
+                    } catch (error: Exception) {
+                        result.success(false)
+                    }
+                    return@setMethodCallHandler
+                }
+                val uri = when (call.method) {
+                    "readImage" -> {
+                        val clipboard =
+                            getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                        val clip = clipboard.primaryClip
+                        if (clip == null || clip.itemCount == 0) {
+                            result.success(null)
+                            return@setMethodCallHandler
+                        }
+                        clipboardDescription = clip.description
+                        requestedMimeType = null
+                        clip.getItemAt(0).uri
+                    }
+                    "readImageUri" -> {
+                        requestedMimeType = call.argument<String>("mimeType")
+                        call.argument<String>("uri")?.let(Uri::parse)
+                    }
+                    else -> {
+                        result.notImplemented()
+                        return@setMethodCallHandler
+                    }
+                }
+                if (uri == null) {
+                    result.success(null)
+                    return@setMethodCallHandler
+                }
+                val mimeType = contentResolver.getType(uri)
+                    ?: requestedMimeType
+                    ?: clipboardDescription?.getMimeType(0)
+                    ?: "image/png"
+                if (!mimeType.startsWith("image/")) {
+                    result.success(null)
+                    return@setMethodCallHandler
+                }
+                try {
+                    contentResolver.openInputStream(uri).use { input ->
+                        if (input == null) {
+                            result.success(null)
+                            return@setMethodCallHandler
+                        }
+                        val output = ByteArrayOutputStream()
+                        input.copyTo(output)
+                        result.success(
+                            mapOf(
+                                "mimeType" to mimeType,
+                                "data" to output.toByteArray(),
+                            ),
+                        )
+                    }
+                } catch (e: Exception) {
+                    result.error("clipboard_unavailable", e.message, null)
+                }
+            }
+
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "mithka/media_editor")
+            .setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "trimVideo" -> {
+                        val path = call.argument<String>("path")
+                        val startMs = call.argument<Number>("startMs")?.toLong()
+                        val endMs = call.argument<Number>("endMs")?.toLong()
+                        if (path.isNullOrBlank() || startMs == null || endMs == null || startMs < 0 || endMs <= startMs) {
+                            result.error("invalid_arguments", "A valid video trim range is required", null)
+                            return@setMethodCallHandler
+                        }
+                        Thread {
+                            try {
+                                val output = trimVideo(path, startMs, endMs)
+                                runOnUiThread { result.success(output) }
+                            } catch (error: Exception) {
+                                runOnUiThread {
+                                    result.error("video_trim_failed", error.localizedMessage, null)
+                                }
+                            }
+                        }.start()
+                    }
+                    // Android keeps the recording's 16:9 framing: see
+                    // VideoNoteCropper.kt for why no hand-written transcode is
+                    // shipped. Dart falls back to the original file.
+                    "cropVideoNote" -> {
+                        val path = call.argument<String>("path")
+                        if (path.isNullOrBlank()) {
+                            result.error("invalid_arguments", "A recorded video note path is required", null)
+                            return@setMethodCallHandler
+                        }
+                        result.error(VideoNoteCropper.UNSUPPORTED_CODE, VideoNoteCropper.UNSUPPORTED_REASON, null)
+                    }
+                    else -> result.notImplemented()
+                }
+            }
+        mediaDropChannel = MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            "mithka/media_drop",
+        )
+        window.decorView.setOnDragListener { _, event -> handleMediaDragEvent(event) }
+    }
+
+    /**
+     * Exposes Android's inbound share contract to Dart without handing Dart a
+     * provider URI that may stop being readable after the activity is resumed.
+     * Files are copied into the app cache on a worker thread and are deleted by
+     * Dart once the send flow finishes or is cancelled.
+     */
+    private fun configureShareIntentChannel(flutterEngine: FlutterEngine) {
+        shareIntentChannel = MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            "mithka/share_intent",
+        )
+        shareIntentChannel?.setMethodCallHandler { call, result ->
+            when (call.method) {
+                "initial" -> {
+                    // Deliberately non-consuming: a delivery that landed before
+                    // Dart registered its handler is recovered by the next
+                    // poll (MainTabView asks again on every mount), and Dart
+                    // drops duplicates by the payload id.
+                    result.success(incomingSharePayload)
+                }
+                "copyFiles" -> {
+                    val uris = (call.arguments as? List<*>)
+                        ?.filterIsInstance<String>()
+                        ?.filter { it.isNotBlank() }
+                        ?.take(MAX_SHARED_FILES)
+                        ?: emptyList()
+                    Thread {
+                        // A result MUST always come back: Dart awaits this
+                        // reply, and a bare thread dying on a provider
+                        // SecurityException would leave the share intake
+                        // waiting for the life of the process.
+                        val files = try {
+                            copySharedFiles(uris)
+                        } catch (error: Throwable) {
+                            Log.w("Mithka", "Unable to copy shared files", error)
+                            emptyList()
+                        }
+                        runOnUiThread { result.success(files) }
+                    }.start()
+                }
+                "deleteFiles" -> {
+                    val paths = (call.arguments as? List<*>)
+                        ?.filterIsInstance<String>()
+                        ?: emptyList()
+                    deleteSharedFiles(paths)
+                    result.success(null)
+                }
+                else -> result.notImplemented()
+            }
+        }
+        // A share that OPENED this window arrived while the FlutterFragment was
+        // still queued (FlutterFragmentActivity adds it with commit()), so the
+        // channel did not exist yet. Hand it over now.
+        if (shareDeliveryPending) {
+            shareDeliveryPending = false
+            incomingSharePayload?.let { payload ->
+                shareIntentChannel?.invokeMethod("share", payload)
+            }
+        }
+    }
+
+    /**
+     * Hands an inbound share to Dart.
+     *
+     * `shareIntentChannel` is created in `configureFlutterEngine`, which runs
+     * when this Activity's FlutterFragment attaches — and
+     * `FlutterFragmentActivity` adds that fragment with `commit()`, i.e. on the
+     * NEXT main-loop pass. A share that opens a new window therefore reaches
+     * `onNewIntent` while the channel is still null, and `Activity.runOnUiThread`
+     * runs its action INLINE when called on the UI thread (it only posts from
+     * another thread), so `runOnUiThread { channel?.invokeMethod(...) }` dropped
+     * the payload without a trace. Keep it pending and flush it from
+     * [configureShareIntentChannel]; the payload also stays process-wide for
+     * Dart's `initial` poll.
+     */
+    private fun deliverShareToDart(payload: Map<String, Any?>) {
+        val channel = shareIntentChannel
+        if (channel == null) {
+            shareDeliveryPending = true
+            return
+        }
+        channel.invokeMethod("share", payload)
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        PushServiceBridge.captureTap(this, intent)
+        val payload = parseIncomingShareIntent(intent) ?: return
+        // Keep a copy for the initial() handshake as well. The payload id lets
+        // Dart de-duplicate it if both paths race during a warm start.
+        incomingSharePayload = payload
+        deliverShareToDart(payload)
+    }
+
+    private fun parseIncomingShareIntent(intent: Intent?): Map<String, Any?>? {
+        val action = intent?.action ?: return null
+        if (action != Intent.ACTION_SEND && action != Intent.ACTION_SEND_MULTIPLE) {
+            return null
+        }
+        val uris = LinkedHashSet<Uri>()
+        intent.data
+            ?.takeIf { it.scheme == "content" || it.scheme == "file" }
+            ?.let(uris::add)
+        intent.clipData?.let { clip ->
+            for (index in 0 until minOf(clip.itemCount, MAX_SHARED_FILES)) {
+                clip.getItemAt(index).uri?.let(uris::add)
+            }
+        }
+        when (val stream = intent.extras?.get(Intent.EXTRA_STREAM)) {
+            is Uri -> uris.add(stream)
+            is ArrayList<*> -> stream.filterIsInstance<Uri>().forEach(uris::add)
+        }
+        val text = intent.getCharSequenceExtra(Intent.EXTRA_TEXT)
+            ?.toString()
+            ?.trim()
+            ?.takeIf { it.isNotEmpty() }
+        if (text == null && uris.isEmpty()) return null
+        return mapOf(
+            "id" to "share-${System.nanoTime()}",
+            "text" to text,
+            "mimeType" to intent.type,
+            "uris" to uris.take(MAX_SHARED_FILES).map(Uri::toString),
+        )
+    }
+
+    private fun copySharedFiles(uriStrings: List<String>): List<Map<String, Any?>> {
+        val copied = mutableListOf<Map<String, Any?>>()
+        for (uriString in uriStrings) {
+            val uri = runCatching { Uri.parse(uriString) }.getOrNull() ?: continue
+            var destination: File? = null
+            try {
+                // getType/query read the PROVIDER: a provider can refuse the
+                // grant or throw while the sending app is being torn down. That
+                // failure belongs to this one file, not to the whole batch.
+                val mimeType = contentResolver.getType(uri)
+                    ?: "application/octet-stream"
+                val displayName = contentResolver.query(
+                    uri,
+                    arrayOf(OpenableColumns.DISPLAY_NAME),
+                    null,
+                    null,
+                    null,
+                )?.use { cursor ->
+                    if (cursor.moveToFirst()) cursor.getString(0) else null
+                }
+                val fileName = sharedFileName(displayName, mimeType)
+                val file = File(
+                    cacheDir,
+                    "mithka-share-${System.nanoTime()}-$fileName",
+                )
+                destination = file
+                val input = contentResolver.openInputStream(uri)
+                if (input == null) {
+                    file.delete()
+                    destination = null
+                    continue
+                }
+                input.use {
+                    file.outputStream().use { output ->
+                        val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+                        var copiedBytes = 0L
+                        while (true) {
+                            val count = it.read(buffer)
+                            if (count < 0) break
+                            copiedBytes += count
+                            if (copiedBytes > MAX_SHARED_FILE_BYTES) {
+                                throw IOException("Shared file is too large")
+                            }
+                            output.write(buffer, 0, count)
+                        }
+                    }
+                }
+                copied += mapOf(
+                    "path" to file.absolutePath,
+                    "fileName" to fileName,
+                    "mimeType" to mimeType,
+                )
+            } catch (error: Exception) {
+                destination?.delete()
+                Log.w("Mithka", "Unable to copy shared file", error)
+            }
+        }
+        return copied
+    }
+
+    private fun sharedFileName(displayName: String?, mimeType: String): String {
+        val raw = displayName
+            ?.substringAfterLast('/')
+            ?.replace(Regex("[^A-Za-z0-9._ -]"), "_")
+            ?.trim()
+            ?.take(120)
+            ?.takeIf { it.isNotEmpty() }
+            ?: "shared-file"
+        if (raw.contains('.')) return raw
+        val extension = MimeTypeMap.getSingleton()
+            .getExtensionFromMimeType(mimeType)
+            ?.replace(Regex("[^A-Za-z0-9]"), "")
+            ?.take(8)
+            ?.takeIf { it.isNotEmpty() }
+        return if (extension == null) raw else "$raw.$extension"
+    }
+
+    private fun deleteSharedFiles(paths: List<String>) {
+        val cacheRoot = runCatching { cacheDir.canonicalFile }.getOrNull() ?: return
+        for (path in paths) {
+            val file = runCatching { File(path).canonicalFile }.getOrNull() ?: continue
+            if (file.parentFile == cacheRoot && file.name.startsWith("mithka-share-")) {
+                file.delete()
+            }
+        }
+    }
+
+    companion object {
+        private const val MAX_SHARED_FILES = 10
+        private const val MAX_SHARED_FILE_BYTES = 512L * 1024L * 1024L
+
+        /// FlutterEngines this process has attached so far. Android reuses a
+        /// finished activity's process, so the app can be entered again with a
+        /// second engine while the first engine's native TDLib clients are
+        /// still alive; Dart keys its stale-client reclaim off this counter.
+        @Volatile
+        private var flutterEngineOrdinal = 0
+
+        /// The engine this Activity configured last: plugins and the engine
+        /// ordinal are engine-scoped, while `configureFlutterEngine` runs on
+        /// every attach.
+        private var configuredEngine: FlutterEngine? = null
+
+        /// Highest ordinal whose Activity has been destroyed. A new engine may
+        /// be created while the previous one is still tearing down (a config
+        /// change re-creates the Activity before the old onDestroy returns), so
+        /// the reclaim must not touch clients whose engine may still be alive.
+        @Volatile
+        private var flutterEngineDestroyedOrdinal = 0
+
+        /** A launcher icon chosen while its switch would close this window. */
+        private const val PENDING_LAUNCHER_ICON = "pending"
+
+        /**
+         * The share that opened this process's current window.
+         *
+         * Process-wide on purpose: a warm attach creates a NEW Activity for the
+         * share (the running window sits on an icon alias, a different
+         * component), and the Dart side that answers `initial` may belong to an
+         * engine that was started by the previous Activity. Dart drops
+         * duplicates by the payload id, so re-reading it is safe.
+         */
+        @Volatile
+        private var incomingSharePayload: Map<String, Any?>? = null
+    }
+
+    private fun handleMediaDragEvent(event: DragEvent): Boolean {
+        when (event.action) {
+            DragEvent.ACTION_DRAG_STARTED -> {
+                acceptingImageDrop =
+                    event.clipDescription?.hasMimeType("image/*") == true ||
+                    event.clipDescription?.hasMimeType(ClipDescription.MIMETYPE_TEXT_URILIST) == true
+                if (acceptingImageDrop) {
+                    mediaDropChannel?.invokeMethod("dragEntered", null)
+                    return true
+                }
+            }
+            DragEvent.ACTION_DRAG_ENTERED -> {
+                if (acceptingImageDrop) {
+                    mediaDropChannel?.invokeMethod("dragEntered", null)
+                    return true
+                }
+            }
+            DragEvent.ACTION_DRAG_LOCATION -> if (acceptingImageDrop) return true
+            DragEvent.ACTION_DRAG_EXITED -> {
+                if (acceptingImageDrop) {
+                    mediaDropChannel?.invokeMethod("dragExited", null)
+                    return true
+                }
+            }
+            DragEvent.ACTION_DROP -> {
+                if (!acceptingImageDrop) return false
+                val permissions = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                    requestDragAndDropPermissions(event)
+                } else {
+                    null
+                }
+                val uris = buildList {
+                    val clip = event.clipData
+                    for (index in 0 until minOf(clip.itemCount, 10)) {
+                        clip.getItemAt(index).uri?.let(::add)
+                    }
+                }
+                Thread {
+                    val paths = uris.mapNotNull { uri ->
+                        val mimeType = contentResolver.getType(uri) ?: return@mapNotNull null
+                        if (!mimeType.startsWith("image/")) return@mapNotNull null
+                        try {
+                            val extension = MimeTypeMap.getSingleton()
+                                .getExtensionFromMimeType(mimeType)
+                                ?.takeIf { it.matches(Regex("^[A-Za-z0-9]{2,5}$")) }
+                                ?: "png"
+                            val destination = File(
+                                cacheDir,
+                                "mithka-drop-${System.nanoTime()}.$extension",
+                            )
+                            contentResolver.openInputStream(uri).use { input ->
+                                if (input == null) return@mapNotNull null
+                                destination.outputStream().use(input::copyTo)
+                            }
+                            destination.absolutePath
+                        } catch (error: Exception) {
+                            Log.w("Mithka", "Unable to read dropped image", error)
+                            null
+                        }
+                    }
+                    runOnUiThread {
+                        permissions?.release()
+                        mediaDropChannel?.invokeMethod("dropImages", paths)
+                    }
+                }.start()
+                acceptingImageDrop = false
+                return true
+            }
+            DragEvent.ACTION_DRAG_ENDED -> {
+                if (acceptingImageDrop) {
+                    mediaDropChannel?.invokeMethod("dragExited", null)
+                    acceptingImageDrop = false
+                    return true
+                }
+            }
+        }
+        return false
+    }
+
+    private fun launcherAliases(): Map<String, String> = mapOf(
+        "default" to "$packageName.MainActivityDefault",
+        "white" to "$packageName.MainActivityWhite",
+        "blue" to "$packageName.MainActivityBlue",
+        "purple" to "$packageName.MainActivityPurple",
+        "pixel" to "$packageName.MainActivityPixel",
+        "aurora" to "$packageName.MainActivityAurora",
+        "prism" to "$packageName.MainActivityPrism",
+        "signal" to "$packageName.MainActivitySignal",
+        "pilot" to "$packageName.MainActivityPilot",
+        "headphones" to "$packageName.MainActivityHeadphones",
+        "winter" to "$packageName.MainActivityWinter",
+        "astronaut" to "$packageName.MainActivityAstronaut",
+        "crown" to "$packageName.MainActivityCrown",
+        "party" to "$packageName.MainActivityParty",
+        "sleepy" to "$packageName.MainActivitySleepy",
+        "heart" to "$packageName.MainActivityHeart",
+        "coffee" to "$packageName.MainActivityCoffee",
+        "detective" to "$packageName.MainActivityDetective",
+        "gamer" to "$packageName.MainActivityGamer",
+        "fishing" to "$packageName.MainActivityFishing",
+        "pixel_neutral" to "$packageName.MainActivityPixelNeutral",
+        "pixel_gradient" to "$packageName.MainActivityPixelGradient",
+        "letter_m_neutral" to "$packageName.MainActivityLetterMNeutralAlt",
+        "letter_m_gradient" to "$packageName.MainActivityLetterMGradient",
+        "mithkax_default" to "$packageName.MainActivityMithkaXDefaultAlt",
+        "mithkax_green" to "$packageName.MainActivityMithkaXGreen",
+        "mithkax_flame" to "$packageName.MainActivityMithkaXFlame",
+        "mithkax_default_night" to "$packageName.MainActivityMithkaXDefaultNight",
+        "mithkax_green_night" to "$packageName.MainActivityMithkaXGreenNight",
+        "mithkax_flame_night" to "$packageName.MainActivityMithkaXFlameNight",
+        "skateboard" to "$packageName.MainActivitySkateboard",
+        "surfboard" to "$packageName.MainActivitySurfboard",
+        "basketball" to "$packageName.MainActivityBasketball",
+        "football" to "$packageName.MainActivityFootball",
+        "tennis" to "$packageName.MainActivityTennis",
+        "skiing" to "$packageName.MainActivitySkiing",
+        "painter" to "$packageName.MainActivityPainter",
+        "guitar" to "$packageName.MainActivityGuitar",
+        "drummer" to "$packageName.MainActivityDrummer",
+        "photographer" to "$packageName.MainActivityPhotographer",
+        "magician" to "$packageName.MainActivityMagician",
+        "chef" to "$packageName.MainActivityChef",
+        "reader" to "$packageName.MainActivityReader",
+        "scientist" to "$packageName.MainActivityScientist",
+        "gardener" to "$packageName.MainActivityGardener",
+        "mail-carrier" to "$packageName.MainActivityMailCarrier",
+        "pirate" to "$packageName.MainActivityPirate",
+        "dragon" to "$packageName.MainActivityDragon",
+        "bubblegum" to "$packageName.MainActivityBubblegum",
+        "raincoat" to "$packageName.MainActivityRaincoat",
+        "noodles" to "$packageName.MainActivityNoodles",
+        "ice-cream" to "$packageName.MainActivityIceCream",
+        "sunflower" to "$packageName.MainActivitySunflower",
+        "ninja" to "$packageName.MainActivityNinja",
+        "high-five" to "$packageName.MainActivityHighFive",
+        "hug" to "$packageName.MainActivityHug",
+        "seesaw" to "$packageName.MainActivitySeesaw",
+        "dance" to "$packageName.MainActivityDance",
+        "pillow-fight" to "$packageName.MainActivityPillowFight",
+        "snowball" to "$packageName.MainActivitySnowball",
+        "parade" to "$packageName.MainActivityParade",
+        "choir" to "$packageName.MainActivityChoir",
+        "stack" to "$packageName.MainActivityStack",
+        "picnic" to "$packageName.MainActivityPicnic",
+        "paper-planes" to "$packageName.MainActivityPaperPlanes",
+        "stargazing" to "$packageName.MainActivityStargazing",
+    )
+
+    // The manifest-enabled alias MithkaX ships with: the Mithka X default mark.
+    // The COMPONENT NAME is historical (it shipped the neutral letter mark
+    // first) and must never be renamed — an update that replaces an enabled
+    // component with a differently named enabled one adds a second home-screen
+    // icon beside every user whose explicit choice lives in package
+    // restrictions. It lives OUTSIDE launcherAliases(): after the first
+    // explicit choice it is always DISABLED, and re-selecting the default icon
+    // routes through the MithkaXDefaultAlt clone instead (manifest-disabled, so
+    // leaving it again is a STATE_DEFAULT transition that does not force-close
+    // the task).
+    private val primordialDefaultAlias: ComponentName
+        get() = ComponentName(packageName, "$packageName.MainActivityLetterMNeutral")
+
+    private fun currentLauncherIcon(): String {
+        pendingLauncherIcon()?.let { return it }
+        val aliases = launcherAliases()
+        // The manifest ships exactly one enabled alias (the primordial neutral
+        // letter mark); it still being in its manifest state means no icon was
+        // ever chosen. That is the common case, and without this check it
+        // costs one binder call per alias during launch before falling
+        // through.
+        val primordialState = packageManager.getComponentEnabledSetting(
+            primordialDefaultAlias,
+        )
+        if (primordialState == PackageManager.COMPONENT_ENABLED_STATE_DEFAULT ||
+            primordialState == PackageManager.COMPONENT_ENABLED_STATE_ENABLED
+        ) {
+            return "mithkax_default"
+        }
+        for ((key, className) in aliases) {
+            val component = ComponentName(packageName, className)
+            val state = packageManager.getComponentEnabledSetting(component)
+            if (state == PackageManager.COMPONENT_ENABLED_STATE_ENABLED) {
+                return key
+            }
+        }
+        // MithkaX ships the Mithka X mark as the default identity.
+        return "mithkax_default"
+    }
+
+    /**
+     * Switches the launcher icon, or defers the switch while it would close
+     * the window on screen.
+     *
+     * Each icon is an activity-alias, and the task Android opened from the
+     * launcher keeps that alias as its base intent. When an alias is disabled,
+     * the system finishes every task based on it ("disabled-package") once it
+     * processes the change: within a couple of seconds on Android 16, and on
+     * other versions as late as the next time the user opens the app from the
+     * new icon, which brings that same task back. Either way the app closed in
+     * front of the user. So a task based on an alias this switch disables keeps
+     * its alias until the user leaves the app; [applyPendingLauncherIcon] then
+     * switches and retires the task, and the next open starts a fresh one.
+     */
+    private fun setLauncherIcon(name: String) {
+        val aliases = launcherAliases()
+        // MithkaX ships the Mithka X mark as the default identity.
+        val target = if (aliases.containsKey(name)) name else "mithkax_default"
+        // The primordial alias lives outside launcherAliases() but is still an
+        // activity-alias this switch disables, so a task based on it closes
+        // exactly like one based on any other alias.
+        val baseAliases = aliases.values + primordialDefaultAlias.className
+        val base = currentTaskBaseComponent()
+        val baseIsOtherAlias = base == null ||
+            (base.packageName == packageName &&
+                baseAliases.contains(base.className) &&
+                base.className != aliases[target])
+        if (baseIsOtherAlias) {
+            launcherIconPrefs().edit().putString(PENDING_LAUNCHER_ICON, target).apply()
+            return
+        }
+        applyLauncherIcon(target)
+    }
+
+    private fun launcherIconPrefs() =
+        getSharedPreferences("mithka_launcher_icon", Context.MODE_PRIVATE)
+
+    private fun pendingLauncherIcon(): String? =
+        launcherIconPrefs().getString(PENDING_LAUNCHER_ICON, null)
+            ?.takeIf { launcherAliases().containsKey(it) }
+
+    /** Applies a deferred switch; [closeTask] retires the window it was waiting on. */
+    private fun applyPendingLauncherIcon(closeTask: Boolean) {
+        val pending = pendingLauncherIcon() ?: return
+        try {
+            applyLauncherIcon(pending)
+        } catch (e: Exception) {
+            Log.w("MainActivity", "Could not apply the chosen launcher icon", e)
+            return
+        }
+        // This task is based on an alias that is now disabled; the system
+        // would finish it shortly anyway, possibly after the user came back.
+        if (closeTask) finishAndRemoveTask()
+    }
+
+    /**
+     * Applies a deferred icon switch and leaves the process entirely.
+     *
+     * A launcher re-reads an alias only once the app that changed it is gone;
+     * a live window kept drawing the old icon until it died on its own. The
+     * pending switch has to land BEFORE the process dies, or the next open
+     * would still start on the old alias.
+     */
+    private fun quitAfterIconChange() {
+        pendingLauncherIcon()?.let { pending ->
+            try {
+                applyLauncherIcon(pending)
+            } catch (e: Exception) {
+                Log.w("MainActivity", "Could not apply the chosen launcher icon", e)
+            }
+        }
+        finishAndRemoveTask()
+        Process.killProcess(Process.myPid())
+    }
+
+    /** The component that opened this window's task, or null if unknown. */
+    private fun currentTaskBaseComponent(): ComponentName? = try {
+        getSystemService(ActivityManager::class.java)?.appTasks?.firstNotNullOfOrNull { task ->
+            val info = task.taskInfo
+            val id = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                info.taskId
+            } else {
+                @Suppress("DEPRECATION")
+                info.persistentId
+            }
+            if (id == taskId) info.baseIntent.component else null
+        }
+    } catch (e: Exception) {
+        null
+    }
+
+    private fun applyLauncherIcon(target: String) {
+        val aliases = launcherAliases()
+
+        // Enable the target alias first so there's never a window where no
+        // launcher icon alias is active — that can cause a crash when the
+        // user returns to the launcher before the switch completes.
+        val targetComponent = ComponentName(packageName, aliases[target]!!)
+        packageManager.setComponentEnabledSetting(
+            targetComponent,
+            PackageManager.COMPONENT_ENABLED_STATE_ENABLED,
+            PackageManager.DONT_KILL_APP,
+        )
+
+        // The manifest-enabled primordial alias must be explicitly
+        // disabled whenever another alias (including the default clone) is
+        // the target — STATE_DEFAULT would resolve it back to ENABLED and
+        // put a second launcher icon on the home screen. This transition
+        // (ENABLED -> DISABLED at runtime) is the one and only switch that
+        // Android answers by closing the app: it happens exactly once, on
+        // the user's first icon choice away from the shipped default.
+        packageManager.setComponentEnabledSetting(
+            primordialDefaultAlias,
+            PackageManager.COMPONENT_ENABLED_STATE_DISABLED,
+            PackageManager.DONT_KILL_APP,
+        )
+
+        for ((key, className) in aliases) {
+            if (key == target) continue
+            val component = ComponentName(packageName, className)
+            // Every alias in the map ships disabled in the manifest. Returning
+            // a non-target alias to STATE_DEFAULT resolves to the same disabled
+            // alias but keeps the runtime transition off the ENABLED ->
+            // DISABLED path Android uses to force-close the task, so switches
+            // after the first never visibly close the app.
+            packageManager.setComponentEnabledSetting(
+                component,
+                PackageManager.COMPONENT_ENABLED_STATE_DEFAULT,
+                PackageManager.DONT_KILL_APP,
+            )
+        }
+        launcherIconPrefs().edit().remove(PENDING_LAUNCHER_ICON).apply()
+    }
+
+    private fun listSystemFonts(): List<String> {
+        val fonts = linkedSetOf(
+            "sans-serif",
+            "sans-serif-condensed",
+            "serif",
+            "monospace",
+            "Roboto",
+            "Noto Sans",
+            "Noto Sans CJK SC",
+            "Noto Sans CJK TC",
+            "Noto Sans JP",
+            "Noto Sans KR",
+        )
+        val paths = listOf(
+            "/system/etc/fonts.xml",
+            "/system/etc/system_fonts.xml",
+            "/product/etc/fonts.xml",
+            "/vendor/etc/fonts.xml",
+        )
+        for (path in paths) {
+            val file = File(path)
+            if (!file.exists() || !file.canRead()) continue
+            try {
+                FileInputStream(file).use { input ->
+                    val parser = XmlPullParserFactory.newInstance().newPullParser()
+                    parser.setInput(input, null)
+                    var event = parser.eventType
+                    while (event != XmlPullParser.END_DOCUMENT) {
+                        if (event == XmlPullParser.START_TAG) {
+                            when (parser.name) {
+                                "family" -> parser.getAttributeValue(null, "name")
+                                    ?.let { addFontFamily(fonts, it) }
+                                "alias" -> {
+                                    if (parser.getAttributeValue(null, "weight").isNullOrBlank()) {
+                                        parser.getAttributeValue(null, "name")
+                                            ?.let { addFontFamily(fonts, it) }
+                                    }
+                                    parser.getAttributeValue(null, "to")
+                                        ?.let { addFontFamily(fonts, it) }
+                                }
+                            }
+                        }
+                        event = parser.next()
+                    }
+                }
+            } catch (e: Exception) {
+                Log.w("Mithka", "Failed to read font list from $path", e)
+            }
+        }
+        return fonts.sortedWith(String.CASE_INSENSITIVE_ORDER)
+    }
+
+    private fun addFontFamily(fonts: MutableSet<String>, name: String) {
+        val family = name.trim()
+        if (family.isEmpty() || isWeightedFontAlias(family)) return
+        fonts.add(family)
+    }
+
+    private fun isWeightedFontAlias(name: String): Boolean {
+        val normalized = name.lowercase()
+        val suffixes = listOf(
+            "-thin",
+            "-extralight",
+            "-ultralight",
+            "-light",
+            "-regular",
+            "-medium",
+            "-semibold",
+            "-demibold",
+            "-bold",
+            "-extrabold",
+            "-ultrabold",
+            "-black",
+            "-heavy",
+            "-italic",
+        )
+        return suffixes.any { normalized.endsWith(it) }
+    }
+
+    private fun registerPlugins(flutterEngine: FlutterEngine) {
+        // Keep per-plugin isolation while matching the generated production registry.
+        // test/android_plugin_registration_test.dart guards dependency drift.
+        val pluginClasses = buildList {
+            add("com.llfbandit.app_links.AppLinksPlugin")
+            add("com.ryanheise.audio_session.AudioSessionPlugin")
+            add("io.flutter.plugins.camerax.CameraAndroidCameraxPlugin")
+            add("com.fluttercavalry.fc_native_video_thumbnail.FcNativeVideoThumbnailPlugin")
+            add("com.mr.flutter.plugin.filepicker.FilePickerPlugin")
+            add("io.flutter.plugins.firebase.analytics.FlutterFirebaseAnalyticsPlugin")
+            add("io.flutter.plugins.firebase.core.FlutterFirebaseCorePlugin")
+            add("io.flutter.plugins.firebase.messaging.FlutterFirebaseMessagingPlugin")
+            add("com.dexterous.flutterlocalnotifications.FlutterLocalNotificationsPlugin")
+            add("io.flutter.plugins.flutter_plugin_android_lifecycle.FlutterAndroidLifecyclePlugin")
+            add("com.it_nomads.fluttersecurestorage.FlutterSecureStoragePlugin")
+            add("xyz.canardoux.fluttersound.FlutterSound")
+            add("com.mediadevkit.fvp.FvpPlugin")
+            add("com.baseflow.geolocator.GeolocatorPlugin")
+            add("io.flutter.plugins.imagepicker.ImagePickerPlugin")
+            add("com.fluttercandies.photo_manager.PhotoManagerPlugin")
+            add("com.github.dart_lang.jni.JniPlugin")
+            add("com.gurfdev.light_compressor_v2.LightCompressorPlugin")
+            add("io.flutter.plugins.localauth.LocalAuthPlugin")
+            add("dev.steenbakker.mobile_scanner.MobileScannerPlugin")
+            add("com.crazecoder.openfile.OpenFilePlugin")
+            add("dev.fluttercommunity.plus.packageinfo.PackageInfoPlugin")
+            add("io.flutter.plugins.pathprovider.PathProviderPlugin")
+            add("com.baseflow.permissionhandler.PermissionHandlerPlugin")
+            add("com.llfbandit.record.RecordPlugin")
+            add("dev.fluttercommunity.plus.sensors.SensorsPlugin")
+            add("io.sentry.flutter.SentryFlutterPlugin")
+            add("io.flutter.plugins.sharedpreferences.SharedPreferencesPlugin")
+            add("com.iebb.cineplay_pip.FVideoPictureInPicturePlugin")
+            add("io.flutter.plugins.urllauncher.UrlLauncherPlugin")
+            add("io.flutter.plugins.videoplayer.VideoPlayerPlugin")
+            add("io.flutter.plugins.webviewflutter.WebViewFlutterPlugin")
+        }
+
+        for (className in pluginClasses) {
+            try {
+                val plugin = Class
+                    .forName(className, false, javaClass.classLoader)
+                    .asSubclass(FlutterPlugin::class.java)
+                    .getDeclaredConstructor()
+                    .newInstance()
+                flutterEngine.plugins.add(plugin)
+            } catch (e: Exception) {
+                Log.e("Mithka", "Error registering plugin $className", e)
+            }
+        }
+    }
+
+    private fun trimVideo(path: String, startMs: Long, endMs: Long): String {
+        val source = File(path)
+        require(source.isFile && source.length() > 0) { "The source video is unavailable" }
+        val output = File(cacheDir, "mithka-trim-${System.nanoTime()}.mp4")
+        val extractor = MediaExtractor()
+        var muxer: MediaMuxer? = null
+        try {
+            extractor.setDataSource(source.absolutePath)
+            muxer = MediaMuxer(
+                output.absolutePath,
+                MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4,
+            )
+            val trackMap = mutableMapOf<Int, Int>()
+            var bufferSize = 1024 * 1024
+            for (track in 0 until extractor.trackCount) {
+                val format = extractor.getTrackFormat(track)
+                val mime = format.getString(MediaFormat.KEY_MIME) ?: continue
+                if (!mime.startsWith("video/") && !mime.startsWith("audio/")) continue
+                extractor.selectTrack(track)
+                trackMap[track] = muxer.addTrack(format)
+                if (format.containsKey(MediaFormat.KEY_MAX_INPUT_SIZE)) {
+                    bufferSize = maxOf(bufferSize, format.getInteger(MediaFormat.KEY_MAX_INPUT_SIZE))
+                }
+            }
+            require(trackMap.isNotEmpty()) { "The file has no video or audio tracks" }
+            val metadata = MediaMetadataRetriever()
+            try {
+                metadata.setDataSource(source.absolutePath)
+                val rotation = metadata.extractMetadata(
+                    MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION,
+                )?.toIntOrNull() ?: 0
+                if (rotation != 0) muxer.setOrientationHint(rotation)
+            } finally {
+                metadata.release()
+            }
+            muxer.start()
+            val startUs = startMs * 1000
+            val endUs = endMs * 1000
+            extractor.seekTo(startUs, MediaExtractor.SEEK_TO_PREVIOUS_SYNC)
+            val baseUs = extractor.sampleTime.coerceAtLeast(0)
+            val buffer = ByteBuffer.allocateDirect(bufferSize)
+            val info = MediaCodec.BufferInfo()
+            while (true) {
+                val sourceTrack = extractor.sampleTrackIndex
+                val sampleTime = extractor.sampleTime
+                if (sourceTrack < 0 || sampleTime < 0 || sampleTime > endUs) break
+                val targetTrack = trackMap[sourceTrack]
+                if (targetTrack != null) {
+                    buffer.clear()
+                    val size = extractor.readSampleData(buffer, 0)
+                    if (size < 0) break
+                    info.offset = 0
+                    info.size = size
+                    info.presentationTimeUs = (sampleTime - baseUs).coerceAtLeast(0)
+                    info.flags = extractor.sampleFlags
+                    muxer.writeSampleData(targetTrack, buffer, info)
+                }
+                if (!extractor.advance()) break
+            }
+            muxer.stop()
+            muxer.release()
+            muxer = null
+            require(output.isFile && output.length() > 0) { "The trimmed video is empty" }
+            return output.absolutePath
+        } catch (error: Exception) {
+            output.delete()
+            throw error
+        } finally {
+            extractor.release()
+            try {
+                muxer?.release()
+            } catch (_: Exception) {
+                // The muxer may not have reached its started state.
+            }
+        }
+    }
+
+    private fun translateOnDevice(args: Map<*, *>?, result: MethodChannel.Result) {
+        val text = args?.get("text") as? String
+        val targetLanguageCode = args?.get("targetLanguageCode") as? String
+        val requestedSourceLanguageCode = args?.get("sourceLanguageCode") as? String
+        if (text.isNullOrBlank() || targetLanguageCode.isNullOrBlank()) {
+            result.error("invalid_arguments", "缺少翻译文本或目标语言", null)
+            return
+        }
+
+        val target = mlKitLanguage(targetLanguageCode)
+        if (target == null) {
+            result.error("unsupported_language", "不支持目标语言 $targetLanguageCode", null)
+            return
+        }
+
+        val requestedSource = mlKitLanguageOrNull(requestedSourceLanguageCode)
+        if (requestedSource != null) {
+            translateWithLanguages(text, requestedSource, target, result)
+            return
+        }
+
+        result.error("source_language_required", "ML Kit 本地翻译需要明确原文语言", null)
+    }
+
+    private fun identifyLanguage(args: Map<*, *>?, result: MethodChannel.Result) {
+        val text = args?.get("text") as? String
+        if (text.isNullOrBlank()) {
+            result.success(null)
+            return
+        }
+        languageIdentifier.identifyPossibleLanguages(text.take(200))
+            .addOnSuccessListener { languages ->
+                val identified = languages
+                    .filter { it.languageTag != "und" && it.confidence >= 0.5f }
+                    .maxByOrNull { it.confidence }
+                result.success(
+                    identified?.let {
+                        mapOf(
+                            "languageCode" to it.languageTag,
+                            "confidence" to it.confidence.toDouble(),
+                        )
+                    },
+                )
+            }
+            .addOnFailureListener { error ->
+                result.error("language_identification_failed", error.localizedMessage, null)
+            }
+    }
+
+    private fun translateWithLanguages(
+        text: String,
+        source: String,
+        target: String,
+        result: MethodChannel.Result,
+    ) {
+        if (source == target) {
+            result.success(text)
+            return
+        }
+
+        val translator = translatorFor(source, target)
+        translator.downloadModelIfNeeded(DownloadConditions.Builder().build())
+            .addOnSuccessListener {
+                translator.translate(text)
+                    .addOnSuccessListener { translated -> result.success(translated) }
+                    .addOnFailureListener { e ->
+                        result.error("translation_failed", e.localizedMessage, null)
+                    }
+            }
+            .addOnFailureListener { e ->
+                result.error("model_download_failed", e.localizedMessage, null)
+            }
+    }
+
+    private fun translatorFor(source: String, target: String): Translator {
+        val key = "$source|$target"
+        return translators.getOrPut(key) {
+            Translation.getClient(
+                TranslatorOptions.Builder()
+                    .setSourceLanguage(source)
+                    .setTargetLanguage(target)
+                    .build(),
+            )
+        }
+    }
+
+    private fun mlKitLanguageOrNull(code: String?): String? {
+        val normalized = normalizeLanguageTag(code) ?: return null
+        return TranslateLanguage.fromLanguageTag(normalized)
+    }
+
+    private fun mlKitLanguage(code: String?): String? {
+        val normalized = normalizeLanguageTag(code) ?: return null
+        return TranslateLanguage.fromLanguageTag(normalized)
+    }
+
+    private fun normalizeLanguageTag(code: String?): String? {
+        val lower = code
+            ?.trim()
+            ?.replace('_', '-')
+            ?.lowercase()
+            ?: return null
+        if (lower.isEmpty() || lower == "auto" || lower == "autodetect" || lower == "und") {
+            return null
+        }
+        if (lower.startsWith("zh")) return "zh"
+        return lower.substringBefore('-')
+    }
+
+    private fun systemMediaVolumeState(audioManager: AudioManager): Map<String, Any> {
+        val maximum = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
+        val minimum = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            audioManager.getStreamMinVolume(AudioManager.STREAM_MUSIC)
+        } else {
+            0
+        }
+        return mapOf(
+            "index" to audioManager.getStreamVolume(AudioManager.STREAM_MUSIC),
+            "minimum" to minimum,
+            "maximum" to maximum,
+            "fixed" to audioManager.isVolumeFixed,
+        )
+    }
+
+    override fun cleanUpFlutterEngine(flutterEngine: FlutterEngine) {
+        pushBridge?.dispose()
+        pushBridge = null
+        downloadStorage?.dispose()
+        downloadStorage = null
+        webProxyBridge?.dispose()
+        webProxyBridge = null
+        translators.values.forEach { it.close() }
+        translators.clear()
+        if (languageIdentifierDelegate.isInitialized()) {
+            languageIdentifier.close()
+        }
+        telegramPasskeys?.dispose()
+        telegramPasskeys = null
+        accountBackup?.dispose()
+        accountBackup = null
+        mithkaPro?.dispose()
+        mithkaPro = null
+        nowPlaying?.dispose()
+        nowPlaying = null
+        externalLinks?.dispose()
+        externalLinks = null
+        callMedia?.dispose()
+        callMedia = null
+        super.cleanUpFlutterEngine(flutterEngine)
+    }
+
+    override fun onDestroy() {
+        FVideoPictureInPicturePlugin.onActivityDestroyed(this)
+        // Back out of the app finishes this window anyway.
+        if (isFinishing) applyPendingLauncherIcon(closeTask = false)
+        super.onDestroy()
+        // The engine (and with it TDLib) belongs to the process, so a finished
+        // Activity is NOT an exit: the next launch re-attaches this engine and
+        // resumes. Killing the process here would take the live engine down and
+        // make the following tap land in a dying process with no window to show
+        // — the "fast Back then reopen does nothing" report.
+    }
+}

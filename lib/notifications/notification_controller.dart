@@ -9,18 +9,17 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
-
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:mithka/l10n/app_localizations.dart';
+import 'package:mithka/platform/app_haptics.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-
 import '../app/chat_deep_link_controller.dart';
-import '../settings/country_chat_blocker.dart';
-import '../settings/hidden_sender_store.dart';
-import '../settings/keyword_blocker.dart';
+import '../settings/privacy_security/country_chat_blocker.dart';
+import '../settings/privacy_security/hidden_sender_store.dart';
+import '../settings/privacy_security/keyword_blocker.dart';
 import '../tdlib/chat_membership.dart';
 import '../tdlib/json_helpers.dart';
 import '../tdlib/td_client.dart';
@@ -164,7 +163,9 @@ class NotificationController with WidgetsBindingObserver, ChangeNotifier {
 
     await _plugin.initialize(
       settings: const InitializationSettings(
-        android: AndroidInitializationSettings('@mipmap/ic_launcher'),
+        android: AndroidInitializationSettings(
+          '@mipmap/ic_launcher_letter_m_neutral',
+        ),
         iOS: DarwinInitializationSettings(
           requestAlertPermission: false,
           requestBadgePermission: false,
@@ -184,7 +185,7 @@ class NotificationController with WidgetsBindingObserver, ChangeNotifier {
           defaultPresentBadge: false,
         ),
         windows: WindowsInitializationSettings(
-          appName: 'Mithka',
+          appName: 'Mithka X',
           appUserModelId: 'Iebb.Mithka.Desktop',
           guid: '19a46b98-1781-4d9e-92ed-bd0576e48e2d',
         ),
@@ -382,7 +383,10 @@ class NotificationController with WidgetsBindingObserver, ChangeNotifier {
       return;
     }
 
-    final messageText = _notificationText(content);
+    final messageText = _notificationText(
+      content,
+      isChannel: TDParse.chatKind(chat) == ChatKind.channel,
+    );
     if (KeywordBlocker.shared.matches(messageText)) return;
     // Same id space as ChatMessage.senderId: users positive, chats negative.
     final sender = raw.obj('sender_id');
@@ -413,7 +417,7 @@ class NotificationController with WidgetsBindingObserver, ChangeNotifier {
       final sender = showPreview
           ? await _senderLabel(raw, chat, clientId)
           : null;
-      final chatTitle = chat.str('title') ?? 'Mithka';
+      final chatTitle = chat.str('title') ?? 'Mithka X';
       final isTargetAccountActive = clientId == _client.activeClientId;
       final accountName = isTargetAccountActive
           ? null
@@ -452,19 +456,19 @@ class NotificationController with WidgetsBindingObserver, ChangeNotifier {
         unawaited(SystemSound.play(SystemSoundType.alert));
       }
       if (_notificationPreferences.inAppVibrate) {
-        unawaited(HapticFeedback.mediumImpact());
+        unawaited(AppHaptics.longPress());
       }
       return;
     }
     if (surface != NotificationSurface.system) return;
-    final chatTitle = chat.str('title') ?? 'Mithka';
+    final chatTitle = chat.str('title') ?? 'Mithka X';
     final isTargetAccountActive = clientId == _client.activeClientId;
     final accountName = isTargetAccountActive
         ? null
         : await _notificationAccountName(clientId);
     final visibleTitle = _notificationPreferences.namesOnLockScreen
         ? chatTitle
-        : 'Mithka';
+        : 'Mithka X';
     final title = notificationTitleForAccount(
       title: visibleTitle,
       isActiveAccount: isTargetAccountActive,
@@ -1074,8 +1078,14 @@ class NotificationController with WidgetsBindingObserver, ChangeNotifier {
     );
   }
 
-  String _notificationText(Map<String, dynamic> content) {
-    final text = TDParse.messageText(content).replaceAll('\n', ' ').trim();
+  String _notificationText(
+    Map<String, dynamic> content, {
+    bool isChannel = false,
+  }) {
+    final text = TDParse.messageText(
+      content,
+      isChannel: isChannel,
+    ).replaceAll('\n', ' ').trim();
     return text.isEmpty
         ? AppStrings.t(AppStringKeys.chatSearchMessageResultLabel)
         : text;
@@ -1169,6 +1179,15 @@ class NotificationController with WidgetsBindingObserver, ChangeNotifier {
     if (target != null) _openTarget(target);
   }
 
+  /// Opens the chat named by a notification payload that reached the app
+  /// through a native surface (the UnifiedPush fallback notification). The
+  /// payload is the same JSON form [NotificationTarget.fromLocalPayload]
+  /// already understands.
+  void openPayload(String payload) {
+    final target = NotificationTarget.fromLocalPayload(payload);
+    if (target != null) _openTarget(target);
+  }
+
   Future<dynamic> _handleNativeTap(MethodCall call) async {
     if (call.method != 'notificationTap') return;
     await _openRemoteNotification(call.arguments);
@@ -1231,7 +1250,7 @@ class NotificationController with WidgetsBindingObserver, ChangeNotifier {
     _lastOpenedAt = now;
     ChatDeepLinkController.shared.openChat(
       chatId: target.chatId,
-      title: target.title ?? 'Mithka',
+      title: target.title ?? 'Mithka X',
       messageId: target.messageId,
       accountUserId: target.accountUserId,
       accountSlot: target.accountSlot,

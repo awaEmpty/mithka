@@ -25,7 +25,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:heroicons_flutter/heroicons_flutter.dart';
 import 'package:mithka/app/chat_deep_link_controller.dart';
 import 'package:mithka/app/liquid_glass_bottom_bar.dart';
 import 'package:mithka/app/main_tab_view.dart';
@@ -39,7 +38,7 @@ import 'package:mithka/components/app_press_ripple.dart';
 import 'package:mithka/components/drawer_controller.dart' as dc;
 import 'package:mithka/l10n/app_locale_controller.dart';
 import 'package:mithka/l10n/app_localizations.dart';
-import 'package:mithka/settings/translation_controller.dart';
+import 'package:mithka/settings/ai_translation/translation_controller.dart';
 import 'package:mithka/tdlib/td_client.dart';
 import 'package:mithka/theme/app_theme.dart';
 import 'package:mithka/theme/theme_controller.dart';
@@ -57,6 +56,10 @@ const _firstSlotKey = ValueKey('bottom-tab-0');
 /// An iPhone 14-style window: 390x844 with the 34px home-indicator inset.
 const _phoneSize = Size(390, 844);
 const _phoneBottomInset = 34.0;
+
+/// An iPad-style window wide enough to split, so the tab bar docks inside the
+/// sidebar column instead of spanning the window.
+const _tabletSize = Size(900, 800);
 
 /// The bar geometry both glass hosts share: the 62px control row inside a 5px
 /// capsule inset, with 14px lateral and 8px top margins, and a 10px gap above
@@ -120,13 +123,14 @@ void main() {
           await tester.runAsync(() async {
             await Future.wait([
               for (final icon in [
+                HeroAppIcons.message,
                 HeroAppIcons.solidMessage,
                 HeroAppIcons.hashtag,
                 HeroAppIcons.solidHashtag,
                 HeroAppIcons.users,
                 HeroAppIcons.solidUsers,
-                HeroAppIcons.circleNotch,
-                HeroAppIcons.solidCircleNotch,
+                HeroAppIcons.star,
+                HeroAppIcons.solidStar,
                 HeroAppIcons.circleCheck,
               ])
                 NativeTabIconRasterizer.png(icon.data, 1, TextDirection.ltr),
@@ -488,22 +492,25 @@ void main() {
 
   for (final glass in [false, true]) {
     testWidgets(
-      '${glass ? 'glass selected' : 'classic unchanged'} tab glyph identities',
+      '${glass ? 'glass' : 'classic'} tab glyphs follow the picked tab',
       (tester) async {
         await onIOS(() async {
           installMockGlassSurface(tester);
           await _pumpShell(tester, _phoneSize, liquidGlass: glass);
+          // Every tab shows its outline glyph until it is picked; the picked
+          // tab fills in. Both hosts obey the rule — the classic bar used to
+          // read the outline glyph whatever the selection was.
           const baseGlyphs = [
-            HeroiconsSolid.chatBubbleLeft,
-            HeroiconsOutline.hashtag,
-            HeroiconsOutline.userGroup,
-            HeroiconsOutline.arrowPath,
+            HeroAppIcons.message,
+            HeroAppIcons.hashtag,
+            HeroAppIcons.users,
+            HeroAppIcons.star,
           ];
           const selectedGlyphs = [
-            HeroiconsSolid.chatBubbleLeft,
-            HeroiconsSolid.hashtag,
-            HeroiconsSolid.userGroup,
-            HeroiconsSolid.arrowPath,
+            HeroAppIcons.solidMessage,
+            HeroAppIcons.solidHashtag,
+            HeroAppIcons.solidUsers,
+            HeroAppIcons.solidStar,
           ];
           // Return to Messages so every other tab is checked after deselection.
           for (final selected in [0, 1, 2, 3, 0]) {
@@ -517,9 +524,9 @@ void main() {
               );
               expect(
                 icon.icon.data,
-                glass && tab.index == selected
-                    ? selectedGlyphs[tab.index]
-                    : baseGlyphs[tab.index],
+                tab.index == selected
+                    ? selectedGlyphs[tab.index].data
+                    : baseGlyphs[tab.index].data,
                 reason: '${tab.label}, selected=$selected, glass=$glass',
               );
               final colors = tester.element(slot).colors;
@@ -620,47 +627,109 @@ void main() {
     });
   });
 
-  // Every glass slot is an icon-only target. With the setting on no label
-  // is drawn in the bar; its accessible name stays on AppInteractiveSurface.
-  testWidgets('glass bar draws no tab label and keeps its semantic names', (
-    tester,
-  ) async {
+  // The compact shell spans the window, so every slot is wide enough for the
+  // tab's own name: its glass row draws the label line above the icon and grows
+  // with it, exactly like the classic bar.
+  testWidgets('phone glass bar names each tab under its icon', (tester) async {
     await onIOS(() async {
       installMockGlassSurface(tester);
       await _pumpShell(tester, _phoneSize);
       final bar = find.byKey(_barKey);
       expect(bar, findsOneWidget);
       for (final tab in _tabs) {
-        // No label text inside the bar — 'Messages' only lives in the chat
-        // list's empty state, which sits outside the bar.
+        final slot = find.byKey(ValueKey('bottom-tab-${tab.index}'));
         expect(
-          find.descendant(of: bar, matching: find.text(tab.label)),
-          findsNothing,
+          find.descendant(of: slot, matching: find.text(tab.label)),
+          findsOneWidget,
         );
+        // The label line sits below the icon inside the slot's own capsule.
+        final label = tester.getRect(
+          find.descendant(of: slot, matching: find.text(tab.label)),
+        );
+        final icon = tester.getRect(
+          find.descendant(of: slot, matching: find.byType(AppIcon)),
+        );
+        expect(label.top, greaterThanOrEqualTo(icon.bottom));
+        expect(label.bottom, lessThanOrEqualTo(tester.getRect(slot).bottom));
         expect(
           semanticLabelOf(tester, ValueKey('bottom-tab-${tab.index}')),
           tab.label,
         );
       }
-      // The icon is what the slot shows, centred in the label's place.
-      expect(
-        find.descendant(of: bar, matching: find.byType(AppIcon)),
-        findsNWidgets(_tabs.length),
-      );
-      // With no label line there is nothing to grow for text scale.
+      // The label line is reserved, so the scaled text grows the row.
       final unscaledHeight = tester.getRect(bar).height;
       tester.binding.platformDispatcher.textScaleFactorTestValue = 2;
       try {
         await _pumpShell(tester, _phoneSize);
         expect(
           tester.getRect(find.byKey(_barKey)).height,
-          unscaledHeight,
-          reason: 'the icon-only glass row never reserves label height',
+          greaterThan(unscaledHeight),
+          reason: 'the phone glass row reserves the scaled label line',
         );
         expect(tester.takeException(), isNull);
       } finally {
         tester.binding.platformDispatcher.clearTextScaleFactorTestValue();
       }
+      await _dispose(tester);
+    });
+  });
+
+  // The split shell docks the bar inside its sidebar column, whose slot is
+  // narrower than a label line: that host keeps the icon-only row so the
+  // selection capsule never reaches past the tab it marks. The accessible name
+  // stays on each slot's AppInteractiveSurface.
+  testWidgets('tablet sidebar glass bar stays icon-only', (tester) async {
+    await onIOS(() async {
+      installMockGlassSurface(tester);
+      await _pumpShell(tester, _tabletSize);
+      final bar = find.byKey(_barKey);
+      expect(bar, findsOneWidget);
+      // The split shell's column really is the host: the bar spans only the
+      // sidebar, not the window.
+      expect(tester.getRect(bar).width, lessThan(_tabletSize.width / 3));
+      for (final tab in _tabs) {
+        final slot = find.byKey(ValueKey('bottom-tab-${tab.index}'));
+        expect(
+          find.descendant(of: slot, matching: find.text(tab.label)),
+          findsNothing,
+        );
+        expect(
+          find.descendant(of: slot, matching: find.byType(AppIcon)),
+          findsOneWidget,
+        );
+        expect(
+          semanticLabelOf(tester, ValueKey('bottom-tab-${tab.index}')),
+          tab.label,
+        );
+      }
+      expect(tester.getRect(bar).height, _surfaceHeight);
+      await _dispose(tester);
+    });
+  });
+
+  // The icon-only row reserves no label height at any text scale, and the
+  // sidebar header beside it survives 200% text without overflowing.
+  testWidgets('sidebar glass row never reserves label height', (tester) async {
+    await onIOS(() async {
+      installMockGlassSurface(tester);
+      tester.binding.platformDispatcher.textScaleFactorTestValue = 2;
+      addTearDown(
+        tester.binding.platformDispatcher.clearTextScaleFactorTestValue,
+      );
+      await _pumpShell(tester, _tabletSize);
+      final bar = find.byKey(_barKey);
+      expect(bar, findsOneWidget);
+      expect(tester.getRect(bar).height, _surfaceHeight);
+      for (final tab in _tabs) {
+        expect(
+          find.descendant(
+            of: find.byKey(ValueKey('bottom-tab-${tab.index}')),
+            matching: find.text(tab.label),
+          ),
+          findsNothing,
+        );
+      }
+      expect(tester.takeException(), isNull);
       await _dispose(tester);
     });
   });

@@ -1,8 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
-
 import 'package:flutter/services.dart';
-
 import 'json_helpers.dart';
 
 typedef WebProxySend =

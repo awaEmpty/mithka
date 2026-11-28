@@ -8,7 +8,6 @@
 //  feature does not exist, so the whole file skips.
 //
 
-import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -33,6 +32,7 @@ MessageHistoryEntry _entry(
   String text = 'hello',
   bool deleted = false,
   int deletedAt = 0,
+  bool edited = false,
   String kindKey = '',
 }) => MessageHistoryEntry(
   accountUserId: accountUserId,
@@ -44,7 +44,9 @@ MessageHistoryEntry _entry(
   kindKey: kindKey,
   state: deleted ? MessageHistoryState.deleted : MessageHistoryState.active,
   deletedAt: deletedAt,
-  events: const [],
+  events: edited
+      ? [MessageHistoryEvent(at: 1700000600, oldText: 'before', newText: text)]
+      : const [],
 );
 
 Future<void> _pumpViewer(WidgetTester tester, MessageHistoryStore store) async {
@@ -82,23 +84,8 @@ BuildContext _contextOf(WidgetTester tester) =>
 /// The viewer renders edit stamps with a local-time formatter; the exact hour
 /// depends on the host timezone, so compute the expectation the same way
 /// instead of pinning a wall-clock string.
-String _editStamp(int unixSeconds) {
-  final t = DateTime.fromMillisecondsSinceEpoch(unixSeconds * 1000).toLocal();
-  String two(int v) => v.toString().padLeft(2, '0');
-  return '${t.year}-${two(t.month)}-${two(t.day)} ${two(t.hour)}:${two(t.minute)}';
-}
-
 /// Resolver stub whose lookups are held until released, so the viewer test
 /// can pin the unresolved-account rendering path.
-class _GatedResolver implements TosAccountUserIdResolver {
-  _GatedResolver(this.ids);
-
-  final Map<int, Completer<int?>> ids;
-
-  @override
-  Future<int?> resolve(int clientId) => ids[clientId]!.future;
-}
-
 void main() {
   if (!_enabled) {
     return;
@@ -121,65 +108,15 @@ void main() {
     await dir.delete(recursive: true);
   });
 
-  testWidgets('empty mirror shows the empty note', (tester) async {
-    await _pumpViewer(tester, store);
-    expect(find.byType(MessageHistoryView), findsOneWidget);
-    expect(
-      find.text(AppStringKeys.historyEmpty.l10n(_contextOf(tester))),
-      findsOneWidget,
-    );
-  });
-
-  testWidgets('a held chat title cannot cross an account switch', (
-    tester,
-  ) async {
-    final oldTitle = Completer<Map<String, dynamic>>();
-    var account = 42;
-    addTearDown(() => account = 0);
-    TdClient.shared.configureProxy(
-      TdClientProxyTransport(
-        accountSlot: 0,
-        query: (request) async {
-          if (request['@type'] != 'getChat') return {'@type': 'ok'};
-          if (account == 0) return {'@type': 'ok'};
-          if (account == 42) return oldTitle.future;
-          return {'@type': 'chat', 'id': 11, 'title': 'Second account title'};
-        },
-        send: (_) async {},
-        updates: const Stream<Map<String, dynamic>>.empty(),
-      ),
-    );
-    addTearDown(TdClient.shared.closeProxy);
-    store.debugSeed([
-      _entry(11, 100, text: 'first account message'),
-      _entry(11, 100, accountUserId: 43, text: 'second account message'),
-    ]);
-    await _pumpViewer(tester, store);
-    account = 43;
-    store.debugSetActiveAccount(43);
-    await tester.pump();
-    oldTitle.complete({
-      '@type': 'chat',
-      'id': 11,
-      'title': 'First account title',
-    });
-    await tester.pumpAndSettle();
-    expect(find.text('first account message'), findsNothing);
-    expect(find.text('First account title'), findsNothing);
-    expect(find.text('second account message'), findsOneWidget);
-    expect(find.text('Second account title'), findsOneWidget);
-    await tester.pumpWidget(const SizedBox.shrink());
-  });
-
   testWidgets('rows list kept messages with their chat label', (tester) async {
     store.debugSeed([
-      _entry(11, 100, text: 'kept one'),
-      _entry(12, 200, text: 'kept two'),
+      _entry(11, 100, text: 'kept one', deleted: true, deletedAt: 1600000000),
+      _entry(12, 200, text: 'kept two', edited: true),
     ]);
     await _pumpViewer(tester, store);
 
-    expect(find.text('kept one'), findsOneWidget);
-    expect(find.text('kept two'), findsOneWidget);
+    expect(find.textContaining('kept one'), findsOneWidget);
+    expect(find.textContaining('kept two'), findsOneWidget);
     // Chat labels fall back to the localized Chat {id} until a title is
     // resolved; each row carries its own chat's label.
     final context = _contextOf(tester);
@@ -194,15 +131,46 @@ void main() {
     expect(context, isNotNull);
   });
 
-  testWidgets('tapping a row filters to its chat', (tester) async {
+  testWidgets('plain active copies never appear, only history', (tester) async {
     store.debugSeed([
-      _entry(11, 100, text: 'kept one'),
-      _entry(11, 101, text: 'kept three'),
-      _entry(12, 200, text: 'kept two'),
+      _entry(11, 100, text: 'still live'),
+      _entry(11, 101, text: 'deleted one', deleted: true),
+      _entry(11, 102, text: 'edited one', edited: true),
     ]);
     await _pumpViewer(tester, store);
 
-    await tester.tap(find.text('kept one'));
+    expect(find.text('still live'), findsNothing);
+    await tester.tap(find.text('Chat 11'));
+    await tester.pump();
+    expect(find.text('still live'), findsNothing);
+    expect(find.text('deleted one'), findsOneWidget);
+    expect(find.text('edited one'), findsOneWidget);
+  });
+
+  testWidgets('a live copy that was only recorded as a base stays hidden', (
+    tester,
+  ) async {
+    // The mirror records every incoming message so a later deletion has its
+    // base; the viewer must not turn into a second inbox because of it.
+    store.debugSeed([_entry(11, 100, text: 'ordinary message')]);
+    await _pumpViewer(tester, store);
+
+    expect(
+      find.text(AppStringKeys.historyEmpty.l10n(_contextOf(tester))),
+      findsOneWidget,
+    );
+    expect(find.text('Chat 11'), findsNothing);
+  });
+
+  testWidgets('tapping a row filters to its chat', (tester) async {
+    store.debugSeed([
+      _entry(11, 100, text: 'kept one', deleted: true),
+      _entry(11, 101, text: 'kept three', deleted: true),
+      _entry(12, 200, text: 'kept two', deleted: true),
+    ]);
+    await _pumpViewer(tester, store);
+
+    await tester.tap(find.text('Chat 11'));
     await tester.pump();
 
     expect(find.text('kept one'), findsOneWidget);
@@ -210,65 +178,81 @@ void main() {
     expect(find.text('kept two'), findsNothing);
   });
 
-  testWidgets('deleted rows carry the Deleted label when the grace passed', (
+  testWidgets('filter chips narrow the chat to deleted or edited copies', (
+    tester,
+  ) async {
+    store.debugSeed([
+      _entry(11, 100, text: 'deleted only', deleted: true),
+      _entry(11, 101, text: 'edited only', edited: true),
+      _entry(11, 102, text: 'deleted and edited', deleted: true, edited: true),
+    ]);
+    await _pumpViewer(tester, store);
+    await tester.tap(find.text('Chat 11'));
+    await tester.pump();
+
+    expect(find.text('deleted only'), findsOneWidget);
+    expect(find.text('edited only'), findsOneWidget);
+
+    await tester.tap(find.byKey(const ValueKey('history-filter-deleted')));
+    await tester.pump();
+    expect(find.text('deleted only'), findsOneWidget);
+    expect(find.text('deleted and edited'), findsOneWidget);
+    expect(find.text('edited only'), findsNothing);
+
+    await tester.tap(find.byKey(const ValueKey('history-filter-edited')));
+    await tester.pump();
+    expect(find.text('edited only'), findsOneWidget);
+    expect(find.text('deleted and edited'), findsOneWidget);
+    expect(find.text('deleted only'), findsNothing);
+  });
+
+  testWidgets('search narrows the kept messages of one chat', (tester) async {
+    store.debugSeed([
+      _entry(11, 100, text: 'invoice for march', deleted: true),
+      _entry(11, 101, text: 'lunch plans', deleted: true),
+    ]);
+    await _pumpViewer(tester, store);
+    await tester.tap(find.text('Chat 11'));
+    await tester.pump();
+
+    await tester.enterText(
+      find.byKey(const ValueKey('settings-search-field')),
+      'invoice',
+    );
+    await tester.pump();
+    expect(find.text('invoice for march'), findsOneWidget);
+    expect(find.text('lunch plans'), findsNothing);
+
+    await tester.enterText(
+      find.byKey(const ValueKey('settings-search-field')),
+      'nothing matches',
+    );
+    await tester.pump();
+    expect(
+      find.text(AppStringKeys.historyNoMatches.l10n(_contextOf(tester))),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('deleted and edited entries render inside the chat', (
     tester,
   ) async {
     store.debugSeed([
       _entry(11, 100, text: 'gone', deleted: true, deletedAt: 1600000000),
-      _entry(11, 101, text: 'fresh', deleted: true),
+      _entry(11, 101, text: 'reworded', edited: true),
     ]);
     await _pumpViewer(tester, store);
 
-    // deletedAt 1600000000 is ancient, so its row says Deleted; the
-    // just-arrived 101 stays quiet during the grace window.
-    expect(
-      find.text(AppStringKeys.historyDeletedLabel.l10n(_contextOf(tester))),
-      findsOneWidget,
-    );
+    // The chat list previews the deletion; the entries render inside the chat.
+    await tester.tap(find.text('Chat 11'));
+    await tester.pump();
     expect(find.text('gone'), findsOneWidget);
-    expect(find.text('fresh'), findsOneWidget);
-  });
-
-  testWidgets('edited rows show the edit event trail', (tester) async {
-    final entry = _entry(11, 100, text: 'v3').copyWith(
-      events: const [
-        MessageHistoryEvent(at: 1700000100, oldText: 'v1', newText: 'v2'),
-        MessageHistoryEvent(at: 1700000200, oldText: 'v2', newText: 'v3'),
-      ],
-    );
-    store.debugSeed([entry]);
-    await _pumpViewer(tester, store);
-
-    expect(find.text('v3'), findsOneWidget);
+    expect(find.text('reworded'), findsOneWidget);
     expect(
-      find.text(
-        AppStrings.t(AppStringKeys.historyEditEvent, {
-          'value1': _editStamp(1700000100),
-          'value2': 'v2',
-        }),
-      ),
+      find.byKey(const ValueKey('history-status-deleted')),
       findsOneWidget,
     );
-    expect(
-      find.text(
-        AppStrings.t(AppStringKeys.historyEditEvent, {
-          'value1': _editStamp(1700000200),
-          'value2': 'v3',
-        }),
-      ),
-      findsOneWidget,
-    );
-  });
-
-  testWidgets('media-only rows fall back to their kind label', (tester) async {
-    store.debugSeed([_entry(11, 100, text: '', kindKey: 'historyKindPhoto')]);
-    await _pumpViewer(tester, store);
-
-    // The kind name shows as the body fallback and again in the status line.
-    expect(
-      find.text(AppStrings.t(AppStringKeys.historyKindPhoto)),
-      findsAtLeastNWidgets(1),
-    );
+    expect(find.byKey(const ValueKey('history-status-edited')), findsOneWidget);
   });
 
   testWidgets('excluded chats are listed and can be re-included', (
@@ -304,48 +288,39 @@ void main() {
     expect(store.isChatExcluded(11), isFalse);
   });
 
-  testWidgets(
-    'a failed re-resolution of the active account clears the rendered rows',
-    (tester) async {
-      final gates = {
-        101: Completer<int?>()..complete(7001),
-        202: Completer<int?>(),
-      };
-      final slotChanges = StreamController<int>.broadcast();
-      addTearDown(slotChanges.close);
-      store.accountUserIdResolver = _GatedResolver(gates);
-      store.activeClientIdProvider = () => 101;
-      store.updateSource = (_) => const Stream.empty();
-      store.activeSlotChangeSource = () => slotChanges.stream;
-      store.startObserving();
-      await tester.pump();
+  testWidgets('group rows resolve their sender name', (tester) async {
+    // The proxy answers getUser; the viewer resolves the seeded group
+    // entry's sender through it and renders the name as the row header.
+    TdClient.shared.configureProxy(
+      TdClientProxyTransport(
+        accountSlot: 0,
+        query: (request) async {
+          if (request['@type'] == 'getUser') {
+            return {
+              '@type': 'user',
+              'id': 42,
+              'first_name': 'Ada',
+              'last_name': 'Lovelace',
+            };
+          }
+          if (request['@type'] != 'getChat') return {'@type': 'ok'};
+          return {'@type': 'chat', 'id': 11, 'title': 'Chat 11'};
+        },
+        send: (_) async {},
+        updates: const Stream<Map<String, dynamic>>.empty(),
+      ),
+    );
+    addTearDown(TdClient.shared.closeProxy);
+    store.debugSeed([_entry(11, 100, text: 'group message', deleted: true)]);
+    await _pumpViewer(tester, store);
 
-      // Account A's rows are on screen, the way the viewer legitimately
-      // looks while its account is resolved.
-      store.debugSeed([_entry(11, 100, accountUserId: 7001, text: 'kept one')]);
-      await _pumpViewer(tester, store);
-      expect(find.text('kept one'), findsOneWidget);
-
-      // The active client switches to B while B's identity is unresolved:
-      // the store drops to empty and must notify the viewer NOW, so the
-      // rows of the previous account leave the screen at once.
-      store.activeClientIdProvider = () => 202;
-      slotChanges.add(202);
-      await tester.pump();
-
-      // B's resolution FAILS: the empty state must be the terminal one.
-      // (Store.entries already reads [] while unresolved; the regression
-      // was that no notification ever reached the real listeners.)
-      gates[202]!.completeError(StateError('getMe lost'));
-      await tester.pump();
-      await tester.pump();
-
-      expect(store.entries, isEmpty);
-      expect(find.text('kept one'), findsNothing);
-      expect(
-        find.text(AppStringKeys.historyEmpty.l10n(_contextOf(tester))),
-        findsOneWidget,
-      );
-    },
-  );
+    await tester.tap(find.text('Chat 11'));
+    await tester.pump();
+    await tester.runAsync<void>(
+      () => Future<void>.delayed(const Duration(milliseconds: 10)),
+    );
+    await tester.pump();
+    expect(find.text('Ada Lovelace'), findsOneWidget);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
 }

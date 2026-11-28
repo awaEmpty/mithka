@@ -7,9 +7,7 @@
 //
 
 import 'dart:async';
-
 import 'package:flutter/material.dart';
-
 import '../components/app_dialog.dart';
 import '../components/ui_components.dart';
 import '../l10n/app_localizations.dart';

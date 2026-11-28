@@ -6,13 +6,11 @@
 //
 
 import 'dart:async';
-
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-
 import '../auth/account_store.dart';
-import '../chat/link_browser.dart';
-import '../chat/link_preview_fixer.dart';
+import '../chat/links_search/link_browser.dart';
+import '../chat/links_search/link_preview_fixer.dart';
 import '../components/app_icons.dart';
 import '../components/settings_selection_row.dart';
 import '../components/toast.dart';
@@ -26,11 +24,11 @@ import '../tdlib/json_helpers.dart';
 import '../tdlib/td_client.dart';
 import '../theme/app_theme.dart';
 import '../theme/theme_controller.dart';
-import 'auto_download_media_controller.dart';
-import 'auto_download_settings_view.dart';
-import 'downloads_view.dart';
-import 'network_usage_view.dart';
-import 'storage_usage_view.dart';
+import 'downloads_storage/auto_download_media_controller.dart';
+import 'downloads_storage/auto_download_settings_view.dart';
+import 'downloads_storage/downloads_view.dart';
+import 'downloads_storage/storage_usage_view.dart';
+import 'network_proxy/network_usage_view.dart';
 import 'video_playback_settings_view.dart';
 
 class GeneralSettingsView extends StatefulWidget {

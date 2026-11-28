@@ -8,7 +8,6 @@
 //
 
 import 'package:flutter/widgets.dart';
-
 import '../components/app_icons.dart';
 import '../components/photo_avatar.dart';
 import '../l10n/app_localizations.dart';

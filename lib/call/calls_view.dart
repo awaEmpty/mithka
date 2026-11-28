@@ -1,8 +1,6 @@
 import 'dart:async';
-
 import 'package:flutter/widgets.dart';
 import 'package:provider/provider.dart';
-
 import '../app/primary_chat_launcher.dart';
 import '../components/app_icons.dart';
 import '../components/photo_avatar.dart';

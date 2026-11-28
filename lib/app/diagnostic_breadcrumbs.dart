@@ -1,9 +1,7 @@
 import 'dart:async';
-
 import 'package:flutter/foundation.dart';
 import 'package:mithka/l10n/app_localizations.dart';
 import 'package:sentry_flutter/sentry_flutter.dart';
-
 import 'telemetry_config.dart';
 
 /// Breadcrumb message for a failed local audio capture.

@@ -1,9 +1,7 @@
 import 'dart:ui';
-
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
-
 import '../tdlib/td_client.dart';
 
 typedef ApplicationShutdown = Future<bool> Function();

@@ -1,6 +1,5 @@
 import 'dart:io' show Platform;
 import 'dart:math';
-
 import 'package:flutter/services.dart';
 
 class LiveCommunicationBridge {

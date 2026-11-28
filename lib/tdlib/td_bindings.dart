@@ -21,7 +21,6 @@ import 'dart:convert';
 import 'dart:ffi';
 import 'dart:io';
 import 'package:ffi/ffi.dart';
-
 import '../platform/ohos_support.dart';
 
 // C signatures

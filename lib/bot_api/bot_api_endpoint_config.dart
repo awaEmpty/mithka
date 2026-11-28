@@ -1,5 +1,4 @@
 import 'package:shared_preferences/shared_preferences.dart';
-
 import 'bot_api_account.dart';
 
 /// The process-wide Telegram Bot API server root used by every bot account.

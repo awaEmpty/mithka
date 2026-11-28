@@ -6,7 +6,6 @@
 //
 
 import 'package:intl/intl.dart';
-
 import 'app_localizations.dart';
 
 abstract final class GramAmount {

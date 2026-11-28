@@ -2,12 +2,12 @@ import 'dart:async';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mithka/channels/topic_chat_view.dart';
-import 'package:mithka/chat/channel_direct_messages_service.dart';
+import 'package:mithka/chat/admin/channel_direct_messages_service.dart';
 import 'package:mithka/chat/chat_view_model.dart';
 import 'package:mithka/config/build_flags.dart';
-import 'package:mithka/settings/country_chat_blocker.dart';
-import 'package:mithka/settings/country_message_filter.dart';
-import 'package:mithka/settings/ghost_mode_controller.dart';
+import 'package:mithka/settings/privacy_security/country_chat_blocker.dart';
+import 'package:mithka/settings/privacy_security/country_message_filter.dart';
+import 'package:mithka/settings/privacy_security/ghost_mode_controller.dart';
 import 'package:mithka/tdlib/td_client.dart';
 import 'package:mithka/tdlib/td_models.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -16,6 +16,9 @@ import 'package:shared_preferences/shared_preferences.dart';
 /// `flutter test --dart-define=I_DONT_FUCKING_CARE_ABOUT_TOS=true
 /// test/ghost_mode_enabled_test.dart`. Every test self-skips when the define
 /// is absent so the default CI run stays green.
+/// MithkaX ships the Section 1.4 opt-in on, so every case below runs by
+/// default here (upstream keeps them behind
+/// `--dart-define=I_DONT_FUCKING_CARE_ABOUT_TOS=true` and skips otherwise).
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 

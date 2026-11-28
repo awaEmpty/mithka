@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:ui' as ui;
-
 import 'package:flutter/widgets.dart';
 
 /// Draws one country flag from the shared sprite sheet.

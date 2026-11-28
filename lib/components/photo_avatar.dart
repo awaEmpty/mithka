@@ -9,13 +9,11 @@
 import 'dart:async';
 import 'dart:io';
 import 'dart:math' as math;
-
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:provider/provider.dart';
 import 'package:video_player/video_player.dart';
-
 import '../app/performance_metrics.dart';
 import '../l10n/app_localizations.dart';
 import '../media/inline_video_motion_guard.dart';
@@ -276,6 +274,16 @@ final class _AvatarPlayerLease {
 /// The ghost surface a deleted account's avatar paints instead of a photo.
 const ghostAvatarKey = ValueKey('photoAvatarGhost');
 
+/// exteraless `AndroidUtil.getOnlineColor`: the dot's fill, or null when the
+/// peer's presence draws no dot at all.
+Color? avatarPresenceColor(AvatarPresence presence) => switch (presence) {
+  AvatarPresence.none => null,
+  AvatarPresence.online => AppTheme.onlineDot,
+  AvatarPresence.within15Minutes => const Color(0xFFEAEA1E),
+  AvatarPresence.within30Minutes => const Color(0xFFEA841E),
+  AvatarPresence.within60Minutes => const Color(0xFFEA1E1E),
+};
+
 /// Profile/group avatar with a real TDLib photo, placeholder, and monogram.
 class PhotoAvatar extends StatefulWidget {
   const PhotoAvatar({
@@ -285,6 +293,7 @@ class PhotoAvatar extends StatefulWidget {
     this.size = 50,
     this.square = false,
     this.showOnlineDot = false,
+    this.onlinePresence = AvatarPresence.none,
     this.allowAnimation = true,
     this.isDeleted = false,
   });
@@ -294,6 +303,12 @@ class PhotoAvatar extends StatefulWidget {
   final double size;
   final bool square;
   final bool showOnlineDot;
+
+  /// exteraless's presence dot: online is green, then yellow / orange / red
+  /// for a last-seen within 15 / 30 / 60 minutes. [showOnlineDot] is the
+  /// legacy boolean the contacts and members lists pass; it maps to
+  /// [AvatarPresence.online].
+  final AvatarPresence onlinePresence;
 
   /// Whether this surface may create a video decoder for an animated avatar.
   /// Dense scrolling lists should leave this off and use the static photo.
@@ -581,7 +596,11 @@ class _PhotoAvatarState extends State<PhotoAvatar> with WidgetsBindingObserver {
   );
 
   Widget _withOnlineDot(Widget avatar) {
-    if (!widget.showOnlineDot) return avatar;
+    final presence = widget.showOnlineDot
+        ? AvatarPresence.online
+        : widget.onlinePresence;
+    final color = avatarPresenceColor(presence);
+    if (color == null) return avatar;
     final size = widget.size;
     final dot = size * 0.26;
     return Stack(
@@ -592,12 +611,19 @@ class _PhotoAvatarState extends State<PhotoAvatar> with WidgetsBindingObserver {
           right: 0,
           bottom: 0,
           child: Container(
+            key: ValueKey('avatar-presence-${presence.name}'),
             width: dot,
             height: dot,
             decoration: BoxDecoration(
-              color: AppTheme.onlineDot,
+              color: color,
               shape: BoxShape.circle,
-              border: Border.all(color: Colors.white, width: size * 0.05),
+              // exteraless punches the dot out of the avatar; the closest
+              // Flutter equivalent is a ring in the surface behind it, which
+              // follows the theme instead of staying white in dark mode.
+              border: Border.all(
+                color: context.colors.background,
+                width: size * 0.06,
+              ),
             ),
           ),
         ),
@@ -682,6 +708,7 @@ class MonogramAvatar extends StatelessWidget {
     required this.title,
     this.size = 50,
     this.showOnlineDot = false,
+    this.onlinePresence = AvatarPresence.none,
     this.square = false,
     this.isDeleted = false,
   });
@@ -689,6 +716,7 @@ class MonogramAvatar extends StatelessWidget {
   final String title;
   final double size;
   final bool showOnlineDot;
+  final AvatarPresence onlinePresence;
   final bool square;
   final bool isDeleted;
 
@@ -699,6 +727,7 @@ class MonogramAvatar extends StatelessWidget {
       size: size,
       square: square,
       showOnlineDot: showOnlineDot,
+      onlinePresence: onlinePresence,
       isDeleted: isDeleted,
     );
   }

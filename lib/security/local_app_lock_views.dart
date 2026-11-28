@@ -1,13 +1,13 @@
 import 'dart:async';
 import 'dart:io';
 import 'dart:math' as math;
-
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:mithka/platform/app_haptics.dart';
 import 'package:provider/provider.dart';
-
 import '../auth/account_store.dart';
 import '../components/app_icons.dart';
+import '../components/brand_mark.dart';
 import '../components/photo_avatar.dart';
 import '../components/toast.dart';
 import '../components/ui_components.dart';
@@ -23,15 +23,26 @@ import 'local_app_lock_controller.dart';
 @immutable
 class _AppLockPalette {
   const _AppLockPalette({
+    required this.backdropTop,
     required this.backdrop,
-    required this.primaryGlow,
-    required this.secondaryGlow,
-    required this.middle,
+    required this.backdropBottom,
+    required this.glowPrimary,
+    required this.glowSecondary,
+    required this.vignette,
     required this.foreground,
+    required this.secondary,
     required this.accent,
+    required this.accentSoft,
     required this.error,
-    required this.controlFill,
-    required this.controlBorder,
+    required this.keyFillTop,
+    required this.keyFillBottom,
+    required this.keySheen,
+    required this.keyRim,
+    required this.keyShadow,
+    required this.emblemFill,
+    required this.emblemRim,
+    required this.badgeFill,
+    required this.footer,
   });
 
   factory _AppLockPalette.of(BuildContext context) {
@@ -39,47 +50,94 @@ class _AppLockPalette {
     final colors = context.colors;
     final scheme = theme.colorScheme;
     final isDark = theme.brightness == Brightness.dark;
-    final backdrop = Color.lerp(
-      colors.chatBackground,
-      colors.groupedBackground,
-      isDark ? 0.68 : 0.86,
+    final base = isDark ? const Color(0xFF0A0D14) : const Color(0xFFF4F7FC);
+    final accent = isDark
+        ? Color.lerp(scheme.primary, Colors.white, 0.28)!
+        : scheme.primary;
+    final accentSoft = Color.lerp(
+      accent,
+      isDark ? Colors.white : scheme.tertiary,
+      0.45,
     )!;
-    final primaryGlow = Color.alphaBlend(
-      scheme.primary.withValues(alpha: isDark ? 0.24 : 0.16),
-      Color.alphaBlend(
-        scheme.tertiary.withValues(alpha: isDark ? 0.10 : 0.08),
-        colors.background,
-      ),
-    );
-    final secondaryGlow = Color.alphaBlend(
-      scheme.tertiary.withValues(alpha: isDark ? 0.16 : 0.11),
-      colors.background,
-    );
+    final foreground = isDark ? const Color(0xFFF4F7FC) : colors.textPrimary;
+    final secondary = isDark
+        ? const Color(0xB3F4F7FC)
+        : colors.textSecondary.withValues(alpha: 0.92);
     return _AppLockPalette(
-      backdrop: backdrop,
-      primaryGlow: primaryGlow,
-      secondaryGlow: secondaryGlow,
-      middle: Color.lerp(backdrop, colors.background, isDark ? 0.20 : 0.56)!,
-      foreground: colors.textPrimary,
-      accent: colors.linkBlue,
-      error: scheme.error,
-      controlFill: Color.alphaBlend(
-        colors.textPrimary.withValues(alpha: isDark ? 0.06 : 0.035),
-        colors.card,
+      backdropTop: isDark ? const Color(0xFF11161F) : const Color(0xFFFBFDFF),
+      backdrop: base,
+      backdropBottom: isDark
+          ? const Color(0xFF070A10)
+          : const Color(0xFFE7EDF7),
+      glowPrimary: Color.alphaBlend(
+        accent.withValues(alpha: isDark ? 0.30 : 0.16),
+        base,
       ),
-      controlBorder: colors.textPrimary.withValues(alpha: isDark ? 0.40 : 0.22),
+      glowSecondary: Color.alphaBlend(
+        (scheme.tertiary).withValues(alpha: isDark ? 0.24 : 0.13),
+        base,
+      ),
+      vignette: Colors.black.withValues(alpha: isDark ? 0.34 : 0.03),
+      foreground: foreground,
+      secondary: secondary,
+      accent: accent,
+      accentSoft: accentSoft,
+      error: isDark
+          ? Color.lerp(scheme.error, Colors.white, 0.18)!
+          : scheme.error,
+      keyFillTop: isDark
+          ? Colors.white.withValues(alpha: 0.105)
+          : Colors.white.withValues(alpha: 0.92),
+      keyFillBottom: isDark
+          ? Colors.white.withValues(alpha: 0.035)
+          : Colors.white.withValues(alpha: 0.55),
+      keySheen: Colors.white.withValues(alpha: isDark ? 0.10 : 0.85),
+      keyRim: isDark
+          ? Colors.white.withValues(alpha: 0.16)
+          : Colors.white.withValues(alpha: 0.95),
+      keyShadow: Colors.black.withValues(alpha: isDark ? 0.32 : 0.08),
+      // The medallion is glass over the gate's own backdrop, so its rim reads
+      // as light caught on an edge rather than a white sticker: tint the hairline
+      // with the theme accent and keep the fill a wash of the same colour.
+      emblemFill: isDark
+          ? Color.alphaBlend(
+              accent.withValues(alpha: 0.10),
+              Colors.white.withValues(alpha: 0.05),
+            )
+          : Color.alphaBlend(
+              accent.withValues(alpha: 0.06),
+              Colors.white.withValues(alpha: 0.72),
+            ),
+      emblemRim: isDark
+          ? Color.lerp(accent, Colors.white, 0.42)!.withValues(alpha: 0.62)
+          : Color.lerp(accent, Colors.white, 0.58)!,
+      badgeFill: isDark
+          ? Color.alphaBlend(accent.withValues(alpha: 0.18), base)
+          : accent,
+      footer: secondary.withValues(alpha: 0.72),
     );
   }
 
+  final Color backdropTop;
   final Color backdrop;
-  final Color primaryGlow;
-  final Color secondaryGlow;
-  final Color middle;
+  final Color backdropBottom;
+  final Color glowPrimary;
+  final Color glowSecondary;
+  final Color vignette;
   final Color foreground;
+  final Color secondary;
   final Color accent;
+  final Color accentSoft;
   final Color error;
-  final Color controlFill;
-  final Color controlBorder;
+  final Color keyFillTop;
+  final Color keyFillBottom;
+  final Color keySheen;
+  final Color keyRim;
+  final Color keyShadow;
+  final Color emblemFill;
+  final Color emblemRim;
+  final Color badgeFill;
+  final Color footer;
 }
 
 class LocalAppLockGate extends StatefulWidget {
@@ -90,9 +148,16 @@ class LocalAppLockGate extends StatefulWidget {
 }
 
 class _LocalAppLockGateState extends State<LocalAppLockGate>
-    with WidgetsBindingObserver {
+    with WidgetsBindingObserver, SingleTickerProviderStateMixin {
   int? _automaticBiometricEpoch;
   int? _pendingAutomaticBiometricEpoch;
+
+  /// Drives the unlock hand-off: 1 shows the gate, 0 has fully handed the
+  /// screen back to the app. Locking jumps straight back to 1 so a resume
+  /// after the timeout can never paint the chat list for a frame first.
+  late final AnimationController _visibility;
+  LocalAppLockController? _lock;
+  bool _overlayVisible = false;
 
   bool get _foreground {
     final state = WidgetsBinding.instance.lifecycleState;
@@ -102,11 +167,49 @@ class _LocalAppLockGateState extends State<LocalAppLockGate>
   @override
   void initState() {
     super.initState();
+    // Eager: dispose() must never be the first reader, or the ticker lookup
+    // would run against a deactivated element.
+    _visibility = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 340),
+      value: 1,
+    )..addStatusListener(_handleVisibilityStatus);
     WidgetsBinding.instance.addObserver(this);
   }
 
   @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final lock = context.read<LocalAppLockController>();
+    if (!identical(lock, _lock)) {
+      _lock?.removeListener(_handleLockChanged);
+      _lock = lock..addListener(_handleLockChanged);
+    }
+  }
+
+  void _handleLockChanged() {
+    final locked = _lock?.locked ?? false;
+    if (locked) {
+      // No entrance fade: the gate must cover the app on the very first
+      // frame after a re-lock. The emblem still springs in by itself.
+      if (!_overlayVisible) setState(() => _overlayVisible = true);
+      if (_visibility.value != 1) _visibility.value = 1;
+    } else if (_overlayVisible &&
+        _visibility.status != AnimationStatus.reverse) {
+      _visibility.reverse();
+    }
+  }
+
+  void _handleVisibilityStatus(AnimationStatus status) {
+    if (status == AnimationStatus.dismissed && _overlayVisible && mounted) {
+      setState(() => _overlayVisible = false);
+    }
+  }
+
+  @override
   void dispose() {
+    _lock?.removeListener(_handleLockChanged);
+    _visibility.dispose();
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }
@@ -141,12 +244,16 @@ class _LocalAppLockGateState extends State<LocalAppLockGate>
   @override
   Widget build(BuildContext context) {
     final controller = context.watch<LocalAppLockController>();
-    if (!controller.locked) return const SizedBox.shrink();
-    if (controller.storageUnavailable) {
-      return _AppLockStorageUnavailableView(controller: controller);
+    final locked = controller.locked;
+    if (locked && !_overlayVisible) {
+      // First frame of a launch that starts locked: show the gate at once,
+      // never a frame of the app underneath.
+      _overlayVisible = true;
     }
+    if (!locked && !_overlayVisible) return const SizedBox.shrink();
     final epoch = controller.lockEpoch;
     final tryBiometricFirst =
+        locked &&
         controller.biometricEnabled &&
         controller.biometricAvailable &&
         _automaticBiometricEpoch != epoch;
@@ -159,13 +266,39 @@ class _LocalAppLockGateState extends State<LocalAppLockGate>
         unawaited(_authenticateAutomatically(controller, epoch));
       });
     }
-    return _AppUnlockView(
-      key: ValueKey(epoch),
-      controller: controller,
-      biometricPending:
-          tryBiometricFirst ||
-          _pendingAutomaticBiometricEpoch == epoch ||
-          controller.authenticatingBiometrics,
+    final Widget gate = controller.storageUnavailable
+        ? _AppLockStorageUnavailableView(controller: controller)
+        : _AppUnlockView(
+            key: ValueKey(epoch),
+            controller: controller,
+            unlocked: !locked,
+            biometricPending:
+                locked &&
+                (tryBiometricFirst ||
+                    _pendingAutomaticBiometricEpoch == epoch ||
+                    controller.authenticatingBiometrics),
+          );
+    return IgnorePointer(
+      ignoring: !locked,
+      child: ExcludeSemantics(
+        excluding: !locked,
+        child: AnimatedBuilder(
+          animation: _visibility,
+          child: gate,
+          builder: (context, child) {
+            final t = Curves.easeOutCubic.transform(
+              _visibility.value.clamp(0.0, 1.0),
+            );
+            return Opacity(
+              key: const ValueKey('app-lock-gate-opacity'),
+              opacity: t,
+              // A hair of growth reads as the lock plate handing the screen
+              // forward, and never exposes an edge the way a slide would.
+              child: Transform.scale(scale: 1 + (1 - t) * 0.035, child: child),
+            );
+          },
+        ),
+      ),
     );
   }
 }
@@ -215,10 +348,16 @@ class _AppUnlockView extends StatelessWidget {
     super.key,
     required this.controller,
     required this.biometricPending,
+    this.unlocked = false,
   });
 
   final LocalAppLockController controller;
   final bool biometricPending;
+
+  /// True while the gate is fading out after a successful unlock. The view
+  /// stays mounted for the transition, so it must not look like a fresh
+  /// challenge during those frames.
+  final bool unlocked;
 
   @override
   Widget build(BuildContext context) {
@@ -237,6 +376,7 @@ class _AppUnlockView extends StatelessWidget {
                 : AppStringKeys.appLockDrawGesture,
             leading: const _ActiveAccountLockAvatar(),
             lockScreenStyle: true,
+            unlocked: unlocked,
             biometricPending: biometricPending,
             biometricKind: controller.biometricKind,
             showBiometric:
@@ -277,23 +417,95 @@ class _AppLockBackdrop extends StatelessWidget {
   Widget build(BuildContext context) {
     final palette = _AppLockPalette.of(context);
     return DecoratedBox(
-      decoration: BoxDecoration(
-        color: palette.backdrop,
-        gradient: RadialGradient(
-          center: const Alignment(0, -0.62),
-          radius: 1.18,
-          colors: [
-            palette.primaryGlow,
-            palette.secondaryGlow,
-            palette.middle,
-            palette.backdrop,
-          ],
-          stops: const [0, 0.34, 0.66, 1],
-        ),
+      decoration: BoxDecoration(color: palette.backdrop),
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          RepaintBoundary(
+            child: CustomPaint(painter: _AppLockBackdropPainter(palette)),
+          ),
+          child,
+        ],
       ),
-      child: child,
     );
   }
+}
+
+/// The aurora plate behind the lock screen: one vertical wash, two soft brand
+/// glows and a vignette. Painted rather than stacked as blurred boxes so it
+/// costs one layer on the lock screen's first frame.
+class _AppLockBackdropPainter extends CustomPainter {
+  const _AppLockBackdropPainter(this.palette);
+
+  final _AppLockPalette palette;
+
+  void _blob(Canvas canvas, Offset center, double radius, Color color) {
+    final bounds = Rect.fromCircle(center: center, radius: radius);
+    canvas.drawCircle(
+      center,
+      radius,
+      Paint()
+        ..shader = RadialGradient(
+          colors: [color, color.withValues(alpha: 0)],
+          stops: const [0, 1],
+        ).createShader(bounds),
+    );
+  }
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final rect = Offset.zero & size;
+    canvas.drawRect(
+      rect,
+      Paint()
+        ..shader = LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [
+            palette.backdropTop,
+            palette.backdrop,
+            palette.backdropBottom,
+          ],
+          stops: const [0, 0.52, 1],
+        ).createShader(rect),
+    );
+    _blob(
+      canvas,
+      Offset(size.width * 0.08, size.height * 0.02),
+      size.width * 0.78,
+      palette.glowPrimary,
+    );
+    _blob(
+      canvas,
+      Offset(size.width * 0.98, size.height * 0.34),
+      size.width * 0.62,
+      palette.glowSecondary,
+    );
+    _blob(
+      canvas,
+      Offset(size.width * 0.35, size.height * 1.02),
+      size.width * 0.85,
+      palette.glowPrimary.withValues(alpha: 0.55),
+    );
+    canvas.drawRect(
+      rect,
+      Paint()
+        ..shader = RadialGradient(
+          center: const Alignment(0, -0.22),
+          radius: 1.15,
+          colors: [Colors.transparent, palette.vignette],
+          stops: const [0.55, 1],
+        ).createShader(rect),
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant _AppLockBackdropPainter oldDelegate) =>
+      oldDelegate.palette.backdrop != palette.backdrop ||
+      oldDelegate.palette.backdropTop != palette.backdropTop ||
+      oldDelegate.palette.glowPrimary != palette.glowPrimary ||
+      oldDelegate.palette.glowSecondary != palette.glowSecondary ||
+      oldDelegate.palette.foreground != palette.foreground;
 }
 
 class _ActiveAccountLockAvatar extends StatefulWidget {
@@ -746,6 +958,7 @@ class _CredentialChallenge extends StatefulWidget {
     this.onBiometric,
     this.lockScreenStyle = false,
     this.biometricPending = false,
+    this.unlocked = false,
   });
 
   final AppLockCredentialType type;
@@ -758,12 +971,14 @@ class _CredentialChallenge extends StatefulWidget {
   final Future<String?> Function()? onBiometric;
   final bool lockScreenStyle;
   final bool biometricPending;
+  final bool unlocked;
 
   @override
   State<_CredentialChallenge> createState() => _CredentialChallengeState();
 }
 
-class _CredentialChallengeState extends State<_CredentialChallenge> {
+class _CredentialChallengeState extends State<_CredentialChallenge>
+    with SingleTickerProviderStateMixin {
   static final Map<LogicalKeyboardKey, int> _keyboardDigits = {
     LogicalKeyboardKey.digit0: 0,
     LogicalKeyboardKey.digit1: 1,
@@ -790,12 +1005,28 @@ class _CredentialChallengeState extends State<_CredentialChallenge> {
   final FocusNode _keyboardFocusNode = FocusNode(
     debugLabel: 'app-lock-credential-keyboard',
   );
+
+  /// A wrong credential shakes the identity cluster above the keypad, the way
+  /// exteraless springs its passcode title. Finite, so widget tests settle.
+  late final AnimationController _shake;
   String _pin = '';
   bool _busy = false;
   String? _error;
 
   @override
+  void initState() {
+    super.initState();
+    // Eager: a lazy controller would be constructed from dispose() when no
+    // error ever occurred, and TickerMode lookups are unsafe by then.
+    _shake = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 520),
+    );
+  }
+
+  @override
   void dispose() {
+    _shake.dispose();
     _keyboardFocusNode.dispose();
     super.dispose();
   }
@@ -805,6 +1036,7 @@ class _CredentialChallengeState extends State<_CredentialChallenge> {
         event is! KeyDownEvent ||
         keyboardModifiersPressed() ||
         _busy ||
+        widget.unlocked ||
         widget.biometricPending) {
       return KeyEventResult.ignored;
     }
@@ -825,7 +1057,9 @@ class _CredentialChallengeState extends State<_CredentialChallenge> {
   }
 
   Widget _withKeyboardInput(Widget child) {
-    if (widget.type != AppLockCredentialType.pin || widget.biometricPending) {
+    if (widget.type != AppLockCredentialType.pin ||
+        widget.biometricPending ||
+        widget.unlocked) {
       return child;
     }
     return Focus(
@@ -837,7 +1071,7 @@ class _CredentialChallengeState extends State<_CredentialChallenge> {
   }
 
   Future<void> _submit(String credential) async {
-    if (_busy || widget.biometricPending) return;
+    if (_busy || widget.biometricPending || widget.unlocked) return;
     setState(() {
       _busy = true;
       _error = null;
@@ -849,16 +1083,20 @@ class _CredentialChallengeState extends State<_CredentialChallenge> {
       _pin = '';
       _error = result.error;
     });
-    if (result.error != null) unawaited(HapticFeedback.vibrate());
+    if (result.error != null) {
+      unawaited(AppHaptics.error());
+      unawaited(_shake.forward(from: 0));
+    }
   }
 
   void _addDigit(int digit) {
     if (_busy ||
+        widget.unlocked ||
         widget.biometricPending ||
         _pin.length >= LocalAppLockController.pinLength) {
       return;
     }
-    unawaited(HapticFeedback.selectionClick());
+    unawaited(AppHaptics.tap());
     setState(() {
       _error = null;
       _pin += '$digit';
@@ -870,8 +1108,10 @@ class _CredentialChallengeState extends State<_CredentialChallenge> {
   }
 
   void _deleteDigit() {
-    if (_busy || widget.biometricPending || _pin.isEmpty) return;
-    unawaited(HapticFeedback.selectionClick());
+    if (_busy || widget.unlocked || widget.biometricPending || _pin.isEmpty) {
+      return;
+    }
+    unawaited(AppHaptics.tap());
     setState(() {
       _error = null;
       _pin = _pin.substring(0, _pin.length - 1);
@@ -881,7 +1121,8 @@ class _CredentialChallengeState extends State<_CredentialChallenge> {
   Future<void> _submitGesture(List<int> pattern) async {
     if (pattern.length < LocalAppLockController.minimumGestureNodes) {
       setState(() => _error = AppStringKeys.appLockGestureTooShort);
-      unawaited(HapticFeedback.vibrate());
+      unawaited(AppHaptics.error());
+      unawaited(_shake.forward(from: 0));
       return;
     }
     await _submit(pattern.join(','));
@@ -900,6 +1141,7 @@ class _CredentialChallengeState extends State<_CredentialChallenge> {
       _busy = false;
       _error = error;
     });
+    if (error != null) unawaited(_shake.forward(from: 0));
   }
 
   @override
@@ -976,73 +1218,95 @@ class _CredentialChallengeState extends State<_CredentialChallenge> {
   Widget _buildLockScreen(BuildContext context) => LayoutBuilder(
     builder: (context, constraints) {
       final palette = _AppLockPalette.of(context);
-      final height = math.max(constraints.maxHeight, 700.0);
-      final topSpacing = math.max(40.0, height * 0.055);
-      final patternSize = math.min(constraints.maxWidth + 19, 480.0);
-      final prompt = widget.biometricPending
+      final prompt = widget.unlocked
+          ? AppStringKeys.appLockUnlocked
+          : widget.biometricPending
           ? _biometricUnlockName(widget.biometricKind)
           : _error ?? widget.prompt;
+      final patternSize = math.min(constraints.maxWidth - 40, 440.0);
       return SingleChildScrollView(
-        child: SizedBox(
-          width: constraints.maxWidth,
-          height: height,
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            child: Column(
-              children: [
-                SizedBox(height: topSpacing),
-                ?widget.leading,
-                const SizedBox(height: 20),
-                AnimatedSwitcher(
-                  duration: const Duration(milliseconds: 140),
-                  child: Text(
-                    prompt.l10n(context),
-                    key: ValueKey(prompt),
-                    textAlign: TextAlign.center,
-                    style: TextStyle(
-                      color: _error == null || widget.biometricPending
-                          ? palette.foreground
-                          : palette.error,
-                      fontSize: 18,
-                      fontWeight: AppTextWeight.regular,
-                      decoration: TextDecoration.none,
+        physics: const ClampingScrollPhysics(),
+        child: ConstrainedBox(
+          constraints: BoxConstraints(minHeight: constraints.maxHeight),
+          child: Center(
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 420),
+              child: Padding(
+                padding: EdgeInsets.fromLTRB(
+                  24,
+                  math.max(28, constraints.maxHeight * 0.055),
+                  24,
+                  20,
+                ),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    _Shake(
+                      animation: _shake,
+                      child: Column(
+                        children: [
+                          _LockEmblem(
+                            error: _error != null && !widget.biometricPending,
+                            pending: widget.biometricPending,
+                            unlocked: widget.unlocked,
+                            biometricKind: widget.biometricKind,
+                            child: widget.leading,
+                          ),
+                          const SizedBox(height: 20),
+                          Text(
+                            widget.title.l10n(context),
+                            textAlign: TextAlign.center,
+                            style: AppTextStyle.display(palette.foreground),
+                          ),
+                          const SizedBox(height: 6),
+                          AnimatedSwitcher(
+                            duration: const Duration(milliseconds: 160),
+                            child: Text(
+                              prompt.l10n(context),
+                              key: ValueKey(prompt),
+                              textAlign: TextAlign.center,
+                              style: AppTextStyle.body(
+                                widget.unlocked ||
+                                        _error == null ||
+                                        widget.biometricPending
+                                    ? palette.secondary
+                                    : palette.error,
+                                weight: AppTextWeight.medium,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
-                  ),
-                ),
-                SizedBox(
-                  height: widget.type == AppLockCredentialType.gesture
-                      ? 38
-                      : 28,
-                ),
-                if (widget.biometricPending)
-                  AppIcon(
-                    _biometricIcon(widget.biometricKind),
-                    size: 48,
-                    color: palette.foreground,
-                  )
-                else if (widget.type == AppLockCredentialType.pin) ...[
-                  _PinDots(
-                    count: _pin.length,
-                    error: _error != null,
-                    lockScreenStyle: true,
-                  ),
-                  const SizedBox(height: 34),
-                  _PinPad(
-                    onDigit: _addDigit,
-                    onDelete: _deleteDigit,
-                    onBiometric: null,
-                    biometricKind: widget.biometricKind,
-                    enabled: !_busy,
-                    lockScreenStyle: true,
-                  ),
-                ] else
-                  SizedBox(
-                    height: patternSize,
-                    child: OverflowBox(
-                      minWidth: patternSize,
-                      maxWidth: patternSize,
-                      child: SizedBox(
+                    const SizedBox(height: 28),
+                    if (widget.unlocked)
+                      _UnlockedCheck(palette: palette)
+                    else if (widget.biometricPending)
+                      _BiometricWaiting(
+                        kind: widget.biometricKind,
+                        palette: palette,
+                      )
+                    else if (widget.type == AppLockCredentialType.pin) ...[
+                      _PinDots(
+                        count: _pin.length,
+                        error: _error != null,
+                        lockScreenStyle: true,
+                      ),
+                      const SizedBox(height: 28),
+                      _PinPad(
+                        onDigit: _addDigit,
+                        onDelete: _deleteDigit,
+                        onBiometric: widget.showBiometric
+                            ? _runBiometric
+                            : null,
+                        biometricKind: widget.biometricKind,
+                        enabled: !_busy,
+                        lockScreenStyle: true,
+                      ),
+                    ] else ...[
+                      SizedBox(
                         width: patternSize,
+                        height: patternSize,
                         child: GesturePatternPad(
                           enabled: !_busy,
                           onCompleted: _submitGesture,
@@ -1050,41 +1314,346 @@ class _CredentialChallengeState extends State<_CredentialChallenge> {
                           lockScreenStyle: true,
                         ),
                       ),
-                    ),
-                  ),
-                const Spacer(),
-                if (widget.showBiometric && !widget.biometricPending)
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                    children: [
-                      _LockScreenAction(
-                        icon: HeroAppIcons.questionCircle,
-                        label:
-                            (widget.type == AppLockCredentialType.gesture
-                                    ? AppStringKeys.appLockForgotGesture
-                                    : AppStringKeys.appLockForgotPin)
-                                .l10n(context),
-                        enabled: !_busy,
-                        onTap: _runBiometric,
-                      ),
-                      _LockScreenAction(
-                        icon: _biometricIcon(widget.biometricKind),
-                        label: _biometricUnlockName(
-                          widget.biometricKind,
-                        ).l10n(context),
-                        enabled: !_busy,
-                        onTap: _runBiometric,
-                      ),
+                      if (widget.showBiometric) ...[
+                        const SizedBox(height: 16),
+                        _BiometricTextButton(
+                          kind: widget.biometricKind,
+                          enabled: !_busy,
+                          onTap: _runBiometric,
+                          lockScreenStyle: true,
+                        ),
+                      ],
                     ],
-                  ),
-                const SizedBox(height: 22),
-              ],
+                    const SizedBox(height: 30),
+                    _LockFooter(palette: palette),
+                  ],
+                ),
+              ),
             ),
           ),
         ),
       );
     },
   );
+}
+
+/// A finite horizontal spring, used for a rejected credential. The offset
+/// decays to zero, so a rebuild after the animation leaves no residue.
+class _Shake extends StatelessWidget {
+  const _Shake({required this.animation, required this.child});
+
+  final Animation<double> animation;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) => AnimatedBuilder(
+    animation: animation,
+    builder: (context, child) {
+      final t = animation.value;
+      if (t == 0) return child!;
+      final dx = math.sin(t * math.pi * 5) * 11 * (1 - t);
+      return Transform.translate(offset: Offset(dx, 0), child: child);
+    },
+    child: child,
+  );
+}
+
+/// Profile portrait inside a glass medallion with a lock seal — the identity
+/// anchor of the lock screen. Enters with a short spring so the gate never
+/// appears as a frozen slab.
+class _LockEmblem extends StatefulWidget {
+  const _LockEmblem({
+    required this.child,
+    required this.error,
+    required this.pending,
+    required this.biometricKind,
+    this.unlocked = false,
+  });
+
+  final Widget? child;
+  final bool error;
+  final bool pending;
+  final AppLockBiometricKind biometricKind;
+  final bool unlocked;
+
+  @override
+  State<_LockEmblem> createState() => _LockEmblemState();
+}
+
+class _LockEmblemState extends State<_LockEmblem>
+    with SingleTickerProviderStateMixin {
+  static const double _size = 112;
+
+  late final AnimationController _entrance;
+  late final Animation<double> _scale;
+  late final Animation<double> _fade;
+
+  @override
+  void initState() {
+    super.initState();
+    _entrance = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 640),
+    );
+    _scale = Tween<double>(
+      begin: 0.84,
+      end: 1,
+    ).animate(CurvedAnimation(parent: _entrance, curve: Curves.easeOutBack));
+    _fade = CurvedAnimation(parent: _entrance, curve: Curves.easeOut);
+    _entrance.forward();
+  }
+
+  @override
+  void dispose() {
+    _entrance.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = _AppLockPalette.of(context);
+    final ringColor = widget.error ? palette.error : palette.accent;
+    return FadeTransition(
+      opacity: _fade,
+      child: ScaleTransition(
+        scale: _scale,
+        child: SizedBox(
+          width: _size,
+          height: _size,
+          child: Stack(
+            clipBehavior: Clip.none,
+            alignment: Alignment.center,
+            children: [
+              Positioned.fill(
+                child: CustomPaint(
+                  painter: _LockEmblemRingPainter(
+                    color: ringColor,
+                    glow: ringColor.withValues(alpha: 0.22),
+                  ),
+                ),
+              ),
+              AnimatedContainer(
+                duration: AppMotion.responsive,
+                width: _size - 16,
+                height: _size - 16,
+                padding: const EdgeInsets.all(4),
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: palette.emblemFill,
+                  border: Border.all(
+                    color: widget.error ? palette.error : palette.emblemRim,
+                  ),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withValues(alpha: 0.20),
+                      blurRadius: 24,
+                      offset: const Offset(0, 12),
+                    ),
+                  ],
+                ),
+                child: ClipOval(child: widget.child ?? const SizedBox.shrink()),
+              ),
+              Positioned(
+                right: -2,
+                bottom: 4,
+                child: AnimatedContainer(
+                  duration: AppMotion.responsive,
+                  width: 34,
+                  height: 34,
+                  alignment: Alignment.center,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: widget.unlocked
+                        ? palette.accent
+                        : widget.error
+                        ? palette.error
+                        : palette.badgeFill,
+                    border: Border.all(
+                      color: palette.backdrop.withValues(alpha: 0.65),
+                      width: 2,
+                    ),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withValues(alpha: 0.24),
+                        blurRadius: 10,
+                        offset: const Offset(0, 4),
+                      ),
+                    ],
+                  ),
+                  child: AppIcon(
+                    widget.unlocked
+                        ? HeroAppIcons.check
+                        : widget.pending
+                        ? _biometricIcon(widget.biometricKind)
+                        : HeroAppIcons.lock,
+                    size: 16,
+                    color: widget.unlocked || widget.error || !widget.pending
+                        ? Colors.white
+                        : palette.accent,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _LockEmblemRingPainter extends CustomPainter {
+  const _LockEmblemRingPainter({required this.color, required this.glow});
+
+  final Color color;
+  final Color glow;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final center = size.center(Offset.zero);
+    final radius = size.shortestSide / 2 - 1;
+    canvas.drawCircle(
+      center,
+      radius,
+      Paint()
+        ..shader = SweepGradient(
+          colors: [
+            color.withValues(alpha: 0.9),
+            color.withValues(alpha: 0.12),
+            color.withValues(alpha: 0.55),
+            color.withValues(alpha: 0.9),
+          ],
+          stops: const [0, 0.42, 0.72, 1],
+        ).createShader(Rect.fromCircle(center: center, radius: radius)),
+    );
+    canvas.drawCircle(
+      center,
+      radius,
+      Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 9
+        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 8)
+        ..color = glow,
+    );
+    canvas.drawCircle(
+      center,
+      radius,
+      Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.3
+        ..shader = SweepGradient(
+          colors: [
+            color.withValues(alpha: 0.95),
+            color.withValues(alpha: 0.15),
+            color.withValues(alpha: 0.65),
+          ],
+          stops: const [0, 0.5, 1],
+        ).createShader(Rect.fromCircle(center: center, radius: radius)),
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant _LockEmblemRingPainter oldDelegate) =>
+      oldDelegate.color != color || oldDelegate.glow != glow;
+}
+
+/// The waiting state during a native biometric prompt: the glyph sits in a
+/// still halo. A spinner would keep the gate repainting while the OS sheet is
+/// up, and an infinite loop also never settles a widget test.
+class _BiometricWaiting extends StatelessWidget {
+  const _BiometricWaiting({required this.kind, required this.palette});
+
+  final AppLockBiometricKind kind;
+  final _AppLockPalette palette;
+
+  @override
+  Widget build(BuildContext context) => SizedBox(
+    width: 116,
+    height: 116,
+    child: Center(
+      child: Container(
+        width: 92,
+        height: 92,
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          color: palette.emblemFill,
+          border: Border.all(color: palette.emblemRim),
+          boxShadow: [
+            BoxShadow(
+              color: palette.accent.withValues(alpha: 0.16),
+              blurRadius: 30,
+              spreadRadius: 4,
+            ),
+          ],
+        ),
+        child: AppIcon(_biometricIcon(kind), size: 42, color: palette.accent),
+      ),
+    ),
+  );
+}
+
+/// The confirmation that plays for the 340 ms the gate takes to hand the
+/// screen back: the lock plate grows into a check while everything fades.
+class _UnlockedCheck extends StatelessWidget {
+  const _UnlockedCheck({required this.palette});
+
+  final _AppLockPalette palette;
+
+  @override
+  Widget build(BuildContext context) {
+    final onAccent =
+        ThemeData.estimateBrightnessForColor(palette.accent) == Brightness.dark
+        ? Colors.white
+        : Colors.black87;
+    return SizedBox(
+      width: 116,
+      height: 116,
+      child: Center(
+        child: TweenAnimationBuilder<double>(
+          tween: Tween<double>(begin: 0.82, end: 1),
+          duration: const Duration(milliseconds: 280),
+          curve: Curves.easeOutBack,
+          builder: (context, value, child) =>
+              Transform.scale(scale: value, child: child),
+          child: Container(
+            width: 92,
+            height: 92,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: palette.accent,
+              boxShadow: [
+                BoxShadow(
+                  color: palette.accent.withValues(alpha: 0.35),
+                  blurRadius: 34,
+                  spreadRadius: 5,
+                ),
+              ],
+            ),
+            child: AppIcon(HeroAppIcons.check, size: 44, color: onAccent),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _LockFooter extends StatelessWidget {
+  const _LockFooter({required this.palette});
+
+  final _AppLockPalette palette;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: [
+        BrandMark.ink(ink: 15),
+        const SizedBox(width: 7),
+        Text('Mithka X', style: AppTextStyle.caption(palette.footer)),
+      ],
+    );
+  }
 }
 
 class GesturePatternPad extends StatefulWidget {
@@ -1141,7 +1710,7 @@ class _GesturePatternPadState extends State<GesturePatternPad> {
       _selected.add(intermediate);
     }
     _selected.add(nearest);
-    unawaited(HapticFeedback.selectionClick());
+    unawaited(AppHaptics.tap());
     setState(() {});
   }
 
@@ -1240,9 +1809,101 @@ class _GesturePatternPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
+    final trail = Path();
+    if (selected.isNotEmpty) {
+      trail.moveTo(centers[selected.first].dx, centers[selected.first].dy);
+      for (final node in selected.skip(1)) {
+        trail.lineTo(centers[node].dx, centers[node].dy);
+      }
+      if (pointer != null) trail.lineTo(pointer!.dx, pointer!.dy);
+    }
+    if (largeOutlinedNodes) {
+      // A blurred under-stroke reads as a soft glow on the glass plate.
+      if (selected.length > 1) {
+        canvas.drawPath(
+          trail,
+          Paint()
+            ..color = accent.withValues(alpha: 0.28)
+            ..strokeWidth = 11
+            ..strokeCap = StrokeCap.round
+            ..strokeJoin = StrokeJoin.round
+            ..style = PaintingStyle.stroke
+            ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 9),
+        );
+      }
+      if (selected.length > 1 || (selected.isNotEmpty && pointer != null)) {
+        canvas.drawPath(
+          trail,
+          Paint()
+            ..shader = LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [accent.withValues(alpha: 0.85), accent],
+            ).createShader(Offset.zero & size)
+            ..strokeWidth = 3.4
+            ..strokeCap = StrokeCap.round
+            ..strokeJoin = StrokeJoin.round
+            ..style = PaintingStyle.stroke,
+        );
+      }
+      for (var index = 0; index < centers.length; index += 1) {
+        final isSelected = selected.contains(index);
+        final center = centers[index];
+        if (isSelected) {
+          canvas.drawCircle(
+            center,
+            40,
+            Paint()
+              ..color = accent.withValues(alpha: 0.24)
+              ..style = PaintingStyle.fill,
+          );
+          canvas.drawCircle(
+            center,
+            32,
+            Paint()
+              ..color = accent
+              ..strokeWidth = 2
+              ..style = PaintingStyle.stroke,
+          );
+          canvas.drawCircle(
+            center,
+            12,
+            Paint()
+              ..color = accent
+              ..style = PaintingStyle.fill
+              ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 6),
+          );
+          canvas.drawCircle(
+            center,
+            9,
+            Paint()
+              ..color = accent
+              ..style = PaintingStyle.fill,
+          );
+        } else {
+          canvas.drawCircle(
+            center,
+            32,
+            Paint()
+              ..color = idle.withValues(alpha: 0.05)
+              ..style = PaintingStyle.fill,
+          );
+          canvas.drawCircle(
+            center,
+            32,
+            Paint()
+              ..color = idle.withValues(alpha: 0.30)
+              ..strokeWidth = 1.6
+              ..style = PaintingStyle.stroke,
+          );
+        }
+      }
+      return;
+    }
+
     final linePaint = Paint()
       ..color = accent
-      ..strokeWidth = largeOutlinedNodes ? 2.5 : 5
+      ..strokeWidth = 5
       ..strokeCap = StrokeCap.round
       ..style = PaintingStyle.stroke;
     if (selected.length > 1) {
@@ -1258,26 +1919,6 @@ class _GesturePatternPainter extends CustomPainter {
     }
     for (var index = 0; index < centers.length; index += 1) {
       final isSelected = selected.contains(index);
-      if (largeOutlinedNodes) {
-        canvas.drawCircle(
-          centers[index],
-          36,
-          Paint()
-            ..color = isSelected ? accent : idle
-            ..strokeWidth = 2
-            ..style = PaintingStyle.stroke,
-        );
-        if (isSelected) {
-          canvas.drawCircle(
-            centers[index],
-            15,
-            Paint()
-              ..color = accent
-              ..style = PaintingStyle.fill,
-          );
-        }
-        continue;
-      }
       canvas.drawCircle(
         centers[index],
         isSelected ? 12 : 10,
@@ -1322,6 +1963,17 @@ class _PinDots extends StatelessWidget {
   Widget build(BuildContext context) {
     final c = context.colors;
     final palette = _AppLockPalette.of(context);
+    final filledColor = error
+        ? palette.error
+        : lockScreenStyle
+        ? palette.accent
+        : c.linkBlue;
+    final idleColor = error
+        ? palette.error
+        : lockScreenStyle
+        ? palette.foreground.withValues(alpha: 0.55)
+        : c.textTertiary;
+    final size = lockScreenStyle ? 15.0 : 13.0;
     return Row(
       mainAxisAlignment: MainAxisAlignment.center,
       children: [
@@ -1331,30 +1983,36 @@ class _PinDots extends StatelessWidget {
           index += 1
         ) ...[
           AnimatedContainer(
-            duration: const Duration(milliseconds: 100),
-            width: 13,
-            height: 13,
+            duration: const Duration(milliseconds: 160),
+            curve: Curves.easeOut,
+            width: size,
+            height: size,
             decoration: BoxDecoration(
               shape: BoxShape.circle,
-              color: index < count
-                  ? (error
-                        ? palette.error
-                        : lockScreenStyle
-                        ? palette.accent
-                        : c.linkBlue)
-                  : Colors.transparent,
-              border: Border.all(
-                color: error
-                    ? palette.error
-                    : lockScreenStyle
-                    ? palette.foreground
-                    : c.textTertiary,
-                width: 1.5,
-              ),
+              color: index < count ? filledColor : Colors.transparent,
+              gradient: index < count && lockScreenStyle && !error
+                  ? LinearGradient(
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                      colors: [palette.accentSoft, palette.accent],
+                    )
+                  : null,
+              border: index < count
+                  ? null
+                  : Border.all(color: idleColor, width: 1.5),
+              boxShadow: index < count && lockScreenStyle
+                  ? [
+                      BoxShadow(
+                        color: filledColor.withValues(alpha: 0.45),
+                        blurRadius: 12,
+                        spreadRadius: 1,
+                      ),
+                    ]
+                  : null,
             ),
           ),
           if (index != LocalAppLockController.pinLength - 1)
-            const SizedBox(width: 15),
+            SizedBox(width: lockScreenStyle ? 17 : 15),
         ],
       ],
     );
@@ -1396,7 +2054,7 @@ class _PinPad extends StatelessWidget {
                 ),
             ],
           ),
-          const SizedBox(height: 14),
+          SizedBox(height: lockScreenStyle ? 16 : 14),
         ],
         Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -1426,6 +2084,130 @@ class _PinPad extends StatelessWidget {
   );
 }
 
+/// Press feedback shared by the digits and the two end keys: a short scale
+/// dip under the finger. GestureDetector's tap cancels still reset it.
+class _PressableKey extends StatefulWidget {
+  const _PressableKey({
+    required this.enabled,
+    required this.onTap,
+    required this.child,
+  });
+
+  final bool enabled;
+  final VoidCallback? onTap;
+  final Widget child;
+
+  @override
+  State<_PressableKey> createState() => _PressableKeyState();
+}
+
+class _PressableKeyState extends State<_PressableKey> {
+  bool _pressed = false;
+
+  void _setPressed(bool value) {
+    if (!widget.enabled || _pressed == value) return;
+    setState(() => _pressed = value);
+  }
+
+  @override
+  Widget build(BuildContext context) => GestureDetector(
+    behavior: HitTestBehavior.opaque,
+    onTapDown: widget.enabled ? (_) => _setPressed(true) : null,
+    onTapUp: widget.enabled ? (_) => _setPressed(false) : null,
+    onTapCancel: widget.enabled ? () => _setPressed(false) : null,
+    onTap: widget.enabled ? widget.onTap : null,
+    child: AnimatedScale(
+      scale: _pressed ? 0.93 : 1,
+      duration: const Duration(milliseconds: 90),
+      curve: Curves.easeOutCubic,
+      child: AnimatedOpacity(
+        opacity: widget.enabled ? 1 : 0.45,
+        duration: const Duration(milliseconds: 120),
+        child: widget.child,
+      ),
+    ),
+  );
+}
+
+/// The circular key plate. On the lock screen it is a glass disc: a translucent
+/// fill, a top sheen and a hairline rim, sitting on a soft shadow.
+class _KeySurface extends StatelessWidget {
+  const _KeySurface({
+    required this.size,
+    required this.lockScreenStyle,
+    required this.child,
+  });
+
+  final double size;
+  final bool lockScreenStyle;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    if (!lockScreenStyle) {
+      return Container(
+        width: size,
+        height: size,
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          color: c.card,
+          border: Border.all(color: c.divider),
+        ),
+        child: child,
+      );
+    }
+    final palette = _AppLockPalette.of(context);
+    return Container(
+      width: size,
+      height: size,
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [palette.keyFillTop, palette.keyFillBottom],
+        ),
+        border: Border.all(color: palette.keyRim),
+        boxShadow: [
+          BoxShadow(
+            color: palette.keyShadow,
+            blurRadius: 18,
+            offset: const Offset(0, 9),
+          ),
+        ],
+      ),
+      child: ClipOval(
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            Align(
+              alignment: Alignment.topCenter,
+              child: FractionallySizedBox(
+                heightFactor: 0.52,
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      begin: Alignment.topCenter,
+                      end: Alignment.bottomCenter,
+                      colors: [
+                        palette.keySheen,
+                        palette.keySheen.withValues(alpha: 0),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+            Center(child: child),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class _NumberKey extends StatelessWidget {
   const _NumberKey({
     required this.number,
@@ -1446,31 +2228,19 @@ class _NumberKey extends StatelessWidget {
     return Semantics(
       button: true,
       label: '$number',
-      child: GestureDetector(
-        behavior: HitTestBehavior.opaque,
-        onTap: enabled ? () => onTap(number) : null,
-        child: AnimatedOpacity(
-          opacity: enabled ? 1 : 0.45,
-          duration: const Duration(milliseconds: 120),
-          child: Container(
-            width: 72,
-            height: 72,
-            alignment: Alignment.center,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              color: lockScreenStyle ? palette.controlFill : c.card,
-              border: Border.all(
-                color: lockScreenStyle ? palette.controlBorder : c.divider,
-              ),
-            ),
-            child: Text(
-              '$number',
-              style: TextStyle(
-                color: lockScreenStyle ? palette.foreground : c.textPrimary,
-                fontSize: 27,
-                fontWeight: AppTextWeight.regular,
-                decoration: TextDecoration.none,
-              ),
+      child: _PressableKey(
+        enabled: enabled,
+        onTap: () => onTap(number),
+        child: _KeySurface(
+          size: 72,
+          lockScreenStyle: lockScreenStyle,
+          child: Text(
+            '$number',
+            style: TextStyle(
+              color: lockScreenStyle ? palette.foreground : c.textPrimary,
+              fontSize: 28,
+              fontWeight: AppTextWeight.medium,
+              decoration: TextDecoration.none,
             ),
           ),
         ),
@@ -1494,27 +2264,24 @@ class _PadIconButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    if (onTap == null) {
+      return const SizedBox(width: 72, height: 72);
+    }
     final palette = _AppLockPalette.of(context);
     return Semantics(
       button: true,
-      child: GestureDetector(
-        behavior: HitTestBehavior.opaque,
-        onTap: enabled ? onTap : null,
-        child: SizedBox(
-          width: 72,
-          height: 72,
-          child: Center(
-            child: AnimatedOpacity(
-              opacity: enabled ? 1 : 0,
-              duration: const Duration(milliseconds: 120),
-              child: AppIcon(
-                icon,
-                size: 27,
-                color: lockScreenStyle
-                    ? palette.foreground
-                    : context.colors.textPrimary,
-              ),
-            ),
+      child: _PressableKey(
+        enabled: enabled,
+        onTap: onTap,
+        child: _KeySurface(
+          size: 72,
+          lockScreenStyle: lockScreenStyle,
+          child: AppIcon(
+            icon,
+            size: 26,
+            color: lockScreenStyle
+                ? palette.foreground
+                : context.colors.textPrimary,
           ),
         ),
       ),
@@ -1527,95 +2294,45 @@ class _BiometricTextButton extends StatelessWidget {
     required this.kind,
     required this.enabled,
     required this.onTap,
+    this.lockScreenStyle = false,
   });
 
   final AppLockBiometricKind kind;
   final bool enabled;
   final VoidCallback onTap;
+  final bool lockScreenStyle;
 
   @override
   Widget build(BuildContext context) {
     final name = _biometricName(kind);
+    final palette = _AppLockPalette.of(context);
+    final accent = lockScreenStyle ? palette.accent : context.colors.linkBlue;
     return Semantics(
       button: true,
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
         onTap: enabled ? onTap : null,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 11),
+          decoration: lockScreenStyle
+              ? BoxDecoration(
+                  borderRadius: BorderRadius.circular(24),
+                  border: Border.all(color: palette.keyRim),
+                  color: palette.keyFillBottom.withValues(alpha: 0.6),
+                )
+              : null,
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              AppIcon(
-                _biometricIcon(kind),
-                size: 22,
-                color: context.colors.linkBlue,
-              ),
+              AppIcon(_biometricIcon(kind), size: 22, color: accent),
               const SizedBox(width: 8),
               Text(
                 AppStrings.t(AppStringKeys.appLockTryBiometric, {
                   'value1': AppStrings.t(name),
                 }),
-                style: AppTextStyle.bodyLarge(context.colors.linkBlue),
+                style: AppTextStyle.bodyLarge(accent),
               ),
             ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _LockScreenAction extends StatelessWidget {
-  const _LockScreenAction({
-    required this.icon,
-    required this.label,
-    required this.enabled,
-    required this.onTap,
-  });
-
-  final AppIconData icon;
-  final String label;
-  final bool enabled;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final palette = _AppLockPalette.of(context);
-    return Semantics(
-      button: true,
-      label: label,
-      child: GestureDetector(
-        behavior: HitTestBehavior.opaque,
-        onTap: enabled ? onTap : null,
-        child: AnimatedOpacity(
-          opacity: enabled ? 1 : 0.45,
-          duration: const Duration(milliseconds: 120),
-          child: SizedBox(
-            width: 132,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Container(
-                  width: 52,
-                  height: 52,
-                  alignment: Alignment.center,
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    border: Border.all(color: palette.controlBorder),
-                  ),
-                  child: AppIcon(icon, size: 23, color: palette.foreground),
-                ),
-                const SizedBox(height: 9),
-                Text(
-                  label,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  textAlign: TextAlign.center,
-                  style: AppTextStyle.body(palette.foreground),
-                ),
-              ],
-            ),
           ),
         ),
       ),
@@ -1799,6 +2516,7 @@ class _MethodChoice extends StatelessWidget {
 
 String _autoLockLabel(AppLockAutoLockOption option) => switch (option) {
   AppLockAutoLockOption.disabled => AppStringKeys.appLockAutoLockDisabled,
+  AppLockAutoLockOption.immediately => AppStringKeys.appLockAutoLockImmediately,
   AppLockAutoLockOption.oneMinute => AppStringKeys.appLockAutoLockOneMinute,
   AppLockAutoLockOption.fiveMinutes => AppStringKeys.appLockAutoLockFiveMinutes,
   AppLockAutoLockOption.oneHour => AppStringKeys.appLockAutoLockOneHour,

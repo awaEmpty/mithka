@@ -1,0 +1,8 @@
+"linkNotTelegramLink" = "Only Telegram links can be opened in Mithka X.";
+"linkHandlerOpenTelegramLinkFailed" = "Unable to open Telegram link";
+"linkShareContinueTitle" = "Open Mithka X to continue";
+"linkShareTapNotification" = "Tap the notification to open the link in Mithka X.";
+"linkShareOpensNextTime" = "The link will open the next time you open Mithka X.";
+"linkShareNotificationTitle" = "Your Telegram link is ready";
+"linkShareNotificationBody" = "Tap to open it in Mithka X.";
+"linkShareDone" = "Done";

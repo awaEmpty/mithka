@@ -9,35 +9,32 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
-
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:flutter_svg/flutter_svg.dart';
 import 'package:google_fonts/google_fonts.dart';
-import 'package:intl/intl.dart' show DateFormat;
 import 'package:mithka/l10n/app_localizations.dart';
 import 'package:mithka/l10n/preview_texts.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:provider/provider.dart';
-
 import '../app/ipad_window_chrome.dart';
-import '../chat/chat_appearance_preview.dart';
-import '../chat/chat_wallpaper.dart';
-import '../chat/chat_wallpaper_view.dart';
-import '../chat/emoji_store.dart';
-import '../chat/image_media_album_bubble.dart';
-import '../chat/message_action_menu.dart';
-import '../chat/message_bubble.dart';
-import '../chat/message_bubble_chat_preview.dart';
-import '../chat/quick_reaction_choice.dart';
+import '../chat/appearance/chat_appearance_preview.dart';
+import '../chat/appearance/chat_wallpaper.dart';
+import '../chat/appearance/chat_wallpaper_view.dart';
+import '../chat/messages/image_media_album_bubble.dart';
+import '../chat/messages/message_action_menu.dart';
+import '../chat/messages/message_bubble.dart';
+import '../chat/messages/message_bubble_chat_preview.dart';
+import '../chat/messages/message_double_tap_action.dart';
+import '../chat/messages/quick_reaction_choice.dart';
+import '../chat/stickers/emoji_store.dart';
 import '../components/app_icons.dart';
 import '../components/app_interactive_surface.dart';
 import '../components/toast.dart';
 import '../components/ui_components.dart';
 import '../platform/adaptive_platform.dart';
+import '../platform/app_haptics.dart';
 import '../platform/system_ui.dart';
-import '../pro/mithka_pro_view.dart';
 import '../tdlib/td_models.dart';
 import '../theme/app_motion.dart';
 import '../theme/app_theme.dart';
@@ -45,12 +42,14 @@ import '../theme/emoji_font_catalog.dart';
 import '../theme/global_theme_view.dart';
 import '../theme/message_bubble_background.dart';
 import '../theme/message_name_colors.dart';
+import '../theme/platform_font_defaults.dart';
 import '../theme/system_font_catalog.dart';
 import '../theme/theme_controller.dart';
-import 'app_icon_controller.dart';
-import 'content_size_settings_view.dart';
-import 'interface_scale_control.dart';
-import 'message_bubble_settings_view.dart';
+import 'appearance/app_icon_controller.dart';
+import 'appearance/content_size_settings_view.dart';
+import 'appearance/interface_scale_control.dart';
+import 'appearance/message_bubble_settings_view.dart';
+import 'appearance/sticker_size_settings_view.dart';
 import 'quick_reaction_settings_view.dart';
 
 class AppearanceView extends StatelessWidget {
@@ -90,10 +89,11 @@ class AppearanceView extends StatelessWidget {
                 ),
                 preview: currentIcon == null
                     ? null
-                    // Standard icons preview their real background, as in
-                    // the picker; penguins keep their background-free art.
-                    : currentIcon.isStandard
-                    ? _StandardAppIconImage(
+                    // Plated icons (motifs and the fork's own marks) preview
+                    // their real background, as in the picker; sticker icons
+                    // keep their background-free art.
+                    : currentIcon.hasPlate
+                    ? _PlatedAppIconImage(
                         key: const ValueKey('appearance-app-icon-preview'),
                         variant: currentIcon,
                         size: AppIconSize.nav,
@@ -125,6 +125,25 @@ class AppearanceView extends StatelessWidget {
                   icon: HeroAppIcons.wandMagicSparkles,
                 ),
                 onChanged: (value) => theme.liquidGlassBottomBar = value,
+              ),
+            ],
+          ),
+          // One switch for every tick in the app. The row listens to the store
+          // itself: the page only watches ThemeController, so a plain
+          // StatelessWidget row would paint the old state after a tap.
+          SettingsSection(
+            titleKey: AppStringKeys.mithkaxHapticsSection,
+            rows: [
+              ListenableBuilder(
+                listenable: AppHaptics.shared,
+                builder: (context, _) => SettingsSwitchRow(
+                  key: const ValueKey('settings-haptics'),
+                  title: AppStringKeys.mithkaxHapticsTitle,
+                  subtitle: AppStringKeys.mithkaxHapticsHint,
+                  value: AppHaptics.shared.enabled,
+                  leading: const SettingsLeadingIcon(icon: HeroAppIcons.flash),
+                  onChanged: AppHaptics.shared.setEnabled,
+                ),
               ),
             ],
           ),
@@ -341,97 +360,35 @@ class AppIconSettingsView extends StatefulWidget {
   State<AppIconSettingsView> createState() => _AppIconSettingsViewState();
 }
 
-class _AppIconSettingsViewState extends State<AppIconSettingsView>
-    with WidgetsBindingObserver {
-  bool _selecting = false;
+class _AppIconSettingsViewState extends State<AppIconSettingsView> {
+  // The key of the tile whose switch is in flight; null when idle. Null means
+  // every tile is enabled; a key disables all tiles (one switch at a time) and
+  // paints the spinner on exactly that tile.
+  String? _switchingKey;
   bool _changeFailed = false;
 
-  @override
-  void initState() {
-    super.initState();
-    WidgetsBinding.instance.addObserver(this);
-  }
-
-  @override
-  void dispose() {
-    WidgetsBinding.instance.removeObserver(this);
-    super.dispose();
-  }
-
-  @override
-  void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state != AppLifecycleState.resumed || !mounted) return;
-    // A suspended day timer may be late, and the time zone may have changed:
-    // recheck today's penguin and reformat the next-change time.
-    context.read<AppIconController>().refreshDailyPenguin();
-    setState(() {});
-  }
-
   Future<void> _select(AppIconVariant icon) async {
-    if (_selecting) return;
+    if (_switchingKey != null) return;
     final controller = context.read<AppIconController>();
     if (!controller.supported || controller.loading) return;
     // Retaining the actual applied icon is never a purchase or native change,
     // including an expired paid choice. Other paid choices still use the
     // controller's unchanged entitlement-first verification below.
     if (controller.isCurrent(icon)) return;
-    // Today's penguin applies directly. If the UTC day rolls over before it
-    // is applied, the old icon stays and the change fails visibly instead of
-    // turning into a purchase prompt.
-    final freeToday = controller.dailyPenguin == icon;
     setState(() {
-      _selecting = true;
+      _switchingKey = icon.key;
       _changeFailed = false;
     });
     try {
-      var applied = await controller.setVariant(icon);
+      final applied = await controller.setVariant(icon);
       if (!mounted) return;
-      if (!applied &&
-          !freeToday &&
-          icon.requiresSupporter &&
-          !controller.activeSupporter) {
-        final unlocked = await Navigator.of(context).push<bool>(
-          AppPageRoute<bool>(
-            pageBuilder: (_, _, _) => MithkaProView(
-              service: controller.proService,
-              returnOnEntitlement: true,
-            ),
-          ),
-        );
-        if (!mounted || unlocked != true) return;
-        // The route result is not authority: recheck native state at selection.
-        applied = await controller.setVariant(icon);
-      }
-      if (!applied && mounted) {
+      if (!applied) {
         setState(() => _changeFailed = true);
         showToast(context, AppStringKeys.appIconChangeFailed);
       }
     } finally {
-      if (mounted) setState(() => _selecting = false);
+      if (mounted) setState(() => _switchingKey = null);
     }
-  }
-
-  // Next 00:00 UTC in the device's time zone, with a localized date and a
-  // time that honours the 12/24-hour preference.
-  String _nextPenguinText(DateTime next) {
-    final local = next.toLocal();
-    final use24 = MediaQuery.alwaysUse24HourFormatOf(context);
-    String value;
-    try {
-      final date = DateFormat.MMMd(
-        Localizations.maybeLocaleOf(context)?.toLanguageTag(),
-      );
-      value = (use24 ? date.add_Hm() : date.add_jm()).format(local);
-    } catch (_) {
-      // An unknown locale must not cost the card its date and time.
-      final material = MaterialLocalizations.of(context);
-      final time = material.formatTimeOfDay(
-        TimeOfDay.fromDateTime(local),
-        alwaysUse24HourFormat: use24,
-      );
-      value = '${material.formatShortMonthDay(local)} $time';
-    }
-    return AppStrings.t(AppStringKeys.appIconNextPenguin, {'value1': value});
   }
 
   Widget _heading(String key, String textKey) => Text(
@@ -444,23 +401,12 @@ class _AppIconSettingsViewState extends State<AppIconSettingsView>
     ),
   );
 
-  Widget _caption(String key, String textKey) => Text(
-    AppStrings.t(textKey),
-    key: ValueKey(key),
-    style: TextStyle(
-      fontSize: 13,
-      height: 18 / 13,
-      color: context.colors.textSecondary,
-    ),
-  );
-
   // Rows hug their tallest actual label; no nested scrollable, implicit
   // MediaQuery padding, fixed two-line reservation, or catalogue-size math.
   Widget _choices(
     AppIconController controller,
     List<AppIconVariant> icons,
     int columns,
-    AppIconVariant? freeToday,
   ) => Column(
     mainAxisSize: MainAxisSize.min,
     children: [
@@ -479,11 +425,11 @@ class _AppIconSettingsViewState extends State<AppIconSettingsView>
                         variant: icons[start + column],
                         selected: controller.isCurrent(icons[start + column]),
                         locked: controller.isLocked(icons[start + column]),
-                        freeToday: icons[start + column] == freeToday,
                         enabled:
                             controller.supported &&
                             !controller.loading &&
-                            !_selecting,
+                            _switchingKey == null,
+                        switching: _switchingKey == icons[start + column].key,
                         horizontal: columns == 1,
                         onTap: () => unawaited(_select(icons[start + column])),
                       ),
@@ -501,7 +447,6 @@ class _AppIconSettingsViewState extends State<AppIconSettingsView>
     final icons = controller.availableVariants;
     final retained = controller.unlistedCurrent;
     // Null for active Supporters and where the 48 are not offered.
-    final freeToday = controller.dailyPenguin;
     final c = context.colors;
     final textScale = MediaQuery.textScalerOf(context).scale(13) / 13;
     return SettingsPageScaffold(
@@ -519,8 +464,9 @@ class _AppIconSettingsViewState extends State<AppIconSettingsView>
                     : constraints.maxWidth < 360 || textScale >= 1.6
                     ? 2
                     : 3;
-                final enabled =
-                    controller.supported && !controller.loading && !_selecting;
+                final mithkaXIcons = icons
+                    .where((icon) => icon.mithkaX)
+                    .toList(growable: false);
                 return ListView(
                   key: const ValueKey('app-icon-scroll'),
                   primary: false,
@@ -542,22 +488,31 @@ class _AppIconSettingsViewState extends State<AppIconSettingsView>
                       ),
                       const SizedBox(height: 8),
                     ],
+                    if (mithkaXIcons.isNotEmpty) ...[
+                      _heading(
+                        'app-icon-mithkax-heading',
+                        AppStringKeys.mithkaxIconHeading,
+                      ),
+                      const SizedBox(height: 12),
+                      _choices(controller, mithkaXIcons, columns),
+                      const SizedBox(height: 20),
+                    ],
                     _heading(
                       'app-icon-standard-heading',
                       AppStringKeys.appIconFreeHeading,
                     ),
-                    const SizedBox(height: 4),
-                    _caption(
-                      'app-icon-standard-caption',
-                      AppStringKeys.appIconFreeCaption,
-                    ),
                     const SizedBox(height: 12),
                     _choices(
                       controller,
-                      icons.where((icon) => !icon.requiresSupporter).toList(),
+                      icons
+                          .where(
+                            (icon) => !icon.requiresSupporter && !icon.mithkaX,
+                          )
+                          .toList(),
                       columns,
-                      null,
                     ),
+                    // Android applies a deferred icon switch when the user
+                    // leaves the app, so no restart notice is needed any more.
                     if (controller.supported &&
                         controller.supporterAvailable &&
                         icons.any((icon) => icon.requiresSupporter)) ...[
@@ -566,35 +521,11 @@ class _AppIconSettingsViewState extends State<AppIconSettingsView>
                         'app-icon-penguin-heading',
                         AppStringKeys.appIconPenguinHeading,
                       ),
-                      const SizedBox(height: 4),
-                      _caption(
-                        'app-icon-penguin-caption',
-                        controller.activeSupporter
-                            ? AppStringKeys.appIconPenguinSupporterCaption
-                            : AppStringKeys.appIconPenguinCaption,
-                      ),
                       const SizedBox(height: 12),
-                      if (freeToday != null) ...[
-                        _FreeTodayCard(
-                          key: ValueKey('app-icon-free-today-${freeToday.key}'),
-                          variant: freeToday,
-                          selected: controller.isCurrent(freeToday),
-                          enabled: enabled,
-                          nextChange: _nextPenguinText(
-                            controller.nextDailyPenguinChange,
-                          ),
-                          onTap: () => unawaited(_select(freeToday)),
-                        ),
-                        const SizedBox(height: 16),
-                      ],
                       _choices(
                         controller,
                         icons.where((icon) => icon.requiresSupporter).toList(),
                         columns,
-                        freeToday,
-                      ),
-                      SettingsNote(
-                        text: AppStrings.t(AppStringKeys.supporterIconAccess),
                       ),
                     ],
                   ],
@@ -824,10 +755,11 @@ class _AppIconChoiceState extends State<_AppIconChoice> {
   }
 }
 
-// A standard icon's opaque Home Screen image, clipped to the icon shape with
-// a faint inner edge so Neutral stays visible on a page of its own colour.
-class _StandardAppIconImage extends StatelessWidget {
-  const _StandardAppIconImage({
+// A plated icon's opaque Home Screen image (motif or the fork's own mark),
+// clipped to the icon shape with a faint inner edge so Neutral stays visible on
+// a page of its own colour.
+class _PlatedAppIconImage extends StatelessWidget {
+  const _PlatedAppIconImage({
     super.key,
     required this.variant,
     required this.size,
@@ -848,7 +780,7 @@ class _StandardAppIconImage extends StatelessWidget {
             child: ClipRRect(
               borderRadius: radius,
               child: Image.asset(
-                variant.standardPickerAsset(Theme.of(context).brightness),
+                variant.platedPickerAsset(Theme.of(context).brightness),
                 width: size,
                 height: size,
                 fit: BoxFit.cover,
@@ -878,40 +810,41 @@ class _StandardAppIconImage extends StatelessWidget {
   }
 }
 
-// The 88pt art shared by grid tiles and the Free today card. Standard icons
-// draw their real background at 80pt, inset so the selected ring (radius 22)
-// keeps a 2pt gap of page colour; penguins keep their background-free art.
+// The 88pt art shared by grid tiles and the Free today card. Plated icons
+// (motif plates and the fork's own Mithka X marks) draw their real background
+// at 80pt, inset so the selected ring (radius 22) keeps a 2pt gap of page
+// colour; sticker icons keep their background-free art.
 class _AppIconArt extends StatelessWidget {
   const _AppIconArt({
     required this.variant,
     required this.selected,
     required this.locked,
-    this.badgeBorder,
-    this.keyPrefix = 'icon',
+    this.switching = false,
   });
 
   final AppIconVariant variant;
   final bool selected;
   final bool locked;
-  final Color? badgeBorder;
-  final String keyPrefix;
+  // The switch on this tile is in flight: its badge slot shows a spinner
+  // instead of the check/lock glyph, same pattern as the emoji-font rows.
+  final bool switching;
 
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
     final dark = Theme.of(context).brightness == Brightness.dark;
-    final standard = variant.isStandard;
+    final plated = variant.hasPlate;
     return SizedBox(
-      key: ValueKey('$keyPrefix-art-${variant.key}'),
+      key: ValueKey('icon-art-${variant.key}'),
       width: 88,
       height: 88,
       child: Stack(
         children: [
-          if (standard)
+          if (plated)
             Positioned.fill(
               child: Padding(
                 padding: const EdgeInsets.all(4),
-                child: _StandardAppIconImage(variant: variant, size: 80),
+                child: _PlatedAppIconImage(variant: variant, size: 80),
               ),
             )
           else
@@ -930,47 +863,52 @@ class _AppIconArt extends StatelessWidget {
           // Overlay the outline so it never pads, clips, or shrinks the art.
           Positioned.fill(
             child: DecoratedBox(
-              key: ValueKey('$keyPrefix-outline-${variant.key}'),
+              key: ValueKey('icon-outline-${variant.key}'),
               decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(standard ? 22 : 16),
+                borderRadius: BorderRadius.circular(plated ? 22 : 16),
                 border: selected
                     ? Border.all(color: AppTheme.brand, width: 2)
                     : null,
               ),
             ),
           ),
-          if (selected || locked)
+          if (selected || locked || switching)
             PositionedDirectional(
               end: 0,
               bottom: 0,
               child: Container(
                 key: ValueKey(
-                  selected
-                      ? '$keyPrefix-selected-${variant.key}'
-                      : '$keyPrefix-locked-${variant.key}',
+                  switching
+                      ? 'icon-switching-${variant.key}'
+                      : selected
+                      ? 'icon-selected-${variant.key}'
+                      : 'icon-locked-${variant.key}',
                 ),
                 width: 24,
                 height: 24,
                 decoration: BoxDecoration(
-                  color: selected
+                  color: selected || switching
                       ? AppTheme.brand
                       : dark
                       ? const Color(0xFFEDEDED)
                       : const Color(0xFF1A1A1A),
                   shape: BoxShape.circle,
-                  border: Border.all(
-                    color: badgeBorder ?? c.groupedBackground,
-                    width: 2,
-                  ),
+                  border: Border.all(color: c.groupedBackground, width: 2),
                 ),
                 alignment: Alignment.center,
-                child: AppIcon(
-                  selected ? HeroAppIcons.check : HeroAppIcons.lock,
-                  size: 13,
-                  color: selected || !dark
-                      ? Colors.white
-                      : const Color(0xFF1A1A1A),
-                ),
+                child: switching
+                    ? const SizedBox(
+                        width: 13,
+                        height: 13,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : AppIcon(
+                        selected ? HeroAppIcons.check : HeroAppIcons.lock,
+                        size: 13,
+                        color: selected || !dark
+                            ? Colors.white
+                            : const Color(0xFF1A1A1A),
+                      ),
               ),
             ),
         ],
@@ -980,223 +918,46 @@ class _AppIconArt extends StatelessWidget {
 }
 
 // Marks today's free penguin for non-Supporters. Brand tint, never brand text.
-class _FreeTodayPill extends StatelessWidget {
-  const _FreeTodayPill({super.key});
-
-  @override
-  Widget build(BuildContext context) {
-    final dark = Theme.of(context).brightness == Brightness.dark;
-    return Container(
-      constraints: const BoxConstraints(minHeight: 20),
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-      decoration: BoxDecoration(
-        color: AppTheme.brand.withValues(alpha: dark ? 0.28 : 0.14),
-        borderRadius: BorderRadius.circular(10),
-      ),
-      child: Text(
-        AppStrings.t(AppStringKeys.appIconFreeToday),
-        maxLines: 1,
-        overflow: TextOverflow.ellipsis,
-        style: TextStyle(
-          fontSize: 12,
-          height: 16 / 12,
-          fontWeight: FontWeight.w600,
-          color: context.colors.textPrimary,
-        ),
-      ),
-    );
-  }
-}
-
-// Today's free penguin for non-Supporters: one tap target on the same
-// selection path as its grid tile. It is never locked.
-class _FreeTodayCard extends StatelessWidget {
-  const _FreeTodayCard({
-    super.key,
-    required this.variant,
-    required this.selected,
-    required this.enabled,
-    required this.nextChange,
-    required this.onTap,
-  });
-
-  final AppIconVariant variant;
-  final bool selected;
-  final bool enabled;
-  final String nextChange;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final c = context.colors;
-    final name = AppStrings.t(variant.labelKey);
-    final description = AppStrings.t(AppStringKeys.supporterIconAccessibility, {
-      'value1': AppStrings.t(variant.fullSemanticNameKey),
-      'value2': AppStrings.t(
-        selected
-            ? AppStringKeys.appIconSelectedFreeToday
-            : AppStringKeys.appIconFreeToday,
-      ),
-    });
-    return _AppIconChoice(
-      semanticsKey: const ValueKey('app-icon-free-today-card'),
-      pressKey: const ValueKey('free-today-press'),
-      label: '$description\n$nextChange',
-      hint: selected ? null : AppStrings.t(AppStringKeys.appIconUseHint),
-      selected: selected,
-      enabled: enabled,
-      onTap: onTap,
-      builder: (focusHighlight) => SettingsPanel(
-        padding: const EdgeInsets.all(12),
-        child: Row(
-          children: [
-            _AppIconArt(
-              variant: variant,
-              selected: selected,
-              locked: false,
-              badgeBorder: c.card,
-              keyPrefix: 'free-today',
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  const _FreeTodayPill(key: ValueKey('free-today-pill')),
-                  const SizedBox(height: 6),
-                  Text(
-                    name,
-                    key: const ValueKey('free-today-name'),
-                    softWrap: true,
-                    style: TextStyle(
-                      fontSize: 17,
-                      height: 22 / 17,
-                      fontWeight: FontWeight.w600,
-                      color: c.textPrimary,
-                      decoration: focusHighlight
-                          ? TextDecoration.underline
-                          : null,
-                    ),
-                  ),
-                  const SizedBox(height: 2),
-                  Text(
-                    nextChange,
-                    key: const ValueKey('free-today-next-change'),
-                    softWrap: true,
-                    style: TextStyle(
-                      fontSize: 13,
-                      height: 18 / 13,
-                      color: c.textSecondary,
-                    ),
-                  ),
-                  const SizedBox(height: 10),
-                  if (selected)
-                    ConstrainedBox(
-                      key: const ValueKey('free-today-selected'),
-                      constraints: const BoxConstraints(minHeight: 32),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          AppIcon(
-                            HeroAppIcons.check,
-                            size: 16,
-                            color: AppTheme.brand,
-                          ),
-                          const SizedBox(width: 6),
-                          Flexible(
-                            child: Text(
-                              AppStrings.t(AppStringKeys.supporterIconSelected),
-                              style: TextStyle(
-                                fontSize: 15,
-                                height: 20 / 15,
-                                fontWeight: FontWeight.w600,
-                                color: c.textSecondary,
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    )
-                  else
-                    // The button's shape only: the whole card is the target.
-                    DecoratedBox(
-                      key: const ValueKey('free-today-use'),
-                      decoration: BoxDecoration(
-                        color: c.accentButton,
-                        borderRadius: BorderRadius.circular(16),
-                      ),
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 14,
-                          vertical: 6,
-                        ),
-                        child: Text(
-                          AppStrings.t(AppStringKeys.appIconUse),
-                          style: TextStyle(
-                            fontSize: 15,
-                            height: 20 / 15,
-                            fontWeight: FontWeight.w600,
-                            color: c.accentButtonText,
-                          ),
-                        ),
-                      ),
-                    ),
-                ],
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
 class _AppIconVariantTile extends StatelessWidget {
   const _AppIconVariantTile({
     super.key,
     required this.variant,
     required this.selected,
     required this.locked,
-    required this.freeToday,
     required this.enabled,
     required this.horizontal,
     required this.onTap,
+    this.switching = false,
   });
 
   final AppIconVariant variant;
   final bool selected;
   final bool locked;
-  // Today's penguin for a non-Supporter: never locked, marked Free today.
-  final bool freeToday;
   final bool enabled;
   final bool horizontal;
   final VoidCallback onTap;
+  // The switch on this tile is in flight: its badge slot shows a spinner
+  // instead of the check/lock glyph, same pattern as the emoji-font rows.
+  final bool switching;
 
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
     final stateKey = selected
-        ? freeToday
-              ? AppStringKeys.appIconSelectedFreeToday
-              : AppStringKeys.supporterIconSelected
+        ? AppStringKeys.supporterIconSelected
         : locked
         ? AppStringKeys.supporterIconRequired
-        : freeToday
-        ? AppStringKeys.appIconFreeToday
         : AppStringKeys.supporterIconAvailable;
     final art = _AppIconArt(
       variant: variant,
       selected: selected,
       locked: locked,
+      switching: switching,
     );
     // Final copy 699 / design 712: background label at every adaptive width,
     // full motif + background name in semantics; natural wrapping, never ellipsis.
     final semanticNameKey = variant.fullSemanticNameKey;
     final visibleNameKey = variant.pickerLabelKey ?? variant.labelKey;
-    final pill = freeToday
-        ? _FreeTodayPill(key: ValueKey('icon-free-today-${variant.key}'))
-        : null;
     return _AppIconChoice(
       semanticsKey: ValueKey('app-icon-${variant.key}'),
       pressKey: ValueKey('icon-press-${variant.key}'),
@@ -1204,11 +965,7 @@ class _AppIconVariantTile extends StatelessWidget {
         'value1': AppStrings.t(semanticNameKey),
         'value2': AppStrings.t(stateKey),
       }),
-      hint: locked
-          ? AppStrings.t(AppStringKeys.supporterIconLockedHint)
-          : freeToday && !selected
-          ? AppStrings.t(AppStringKeys.appIconUseHint)
-          : null,
+      hint: locked ? AppStrings.t(AppStringKeys.supporterIconLockedHint) : null,
       selected: selected,
       enabled: enabled,
       onTap: onTap,
@@ -1231,25 +988,12 @@ class _AppIconVariantTile extends StatelessWidget {
                 children: [
                   art,
                   const SizedBox(width: 12),
-                  Expanded(
-                    child: pill == null
-                        ? label
-                        : Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            mainAxisSize: MainAxisSize.min,
-                            children: [label, const SizedBox(height: 4), pill],
-                          ),
-                  ),
+                  Expanded(child: label),
                 ],
               )
             : Column(
                 mainAxisSize: MainAxisSize.min,
-                children: [
-                  art,
-                  const SizedBox(height: 4),
-                  label,
-                  if (pill != null) ...[const SizedBox(height: 4), pill],
-                ],
+                children: [art, const SizedBox(height: 4), label],
               );
       },
     );
@@ -1556,6 +1300,41 @@ class MobileMessageActionMenuSettingsView extends StatelessWidget {
   }
 }
 
+class ChannelBottomBarSettingsView extends StatelessWidget {
+  const ChannelBottomBarSettingsView({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = context.watch<ThemeController>();
+    const appearance = AppearanceView();
+    return SettingsPageScaffold(
+      key: const ValueKey('channel-bottom-bar-settings-page'),
+      title: AppStrings.t(AppStringKeys.mithkaxChannelBottomBar),
+      onBack: () => Navigator.of(context).pop(),
+      child: SettingsListView(
+        children: [
+          appearance._card(context, [
+            for (final mode in ChannelBottomBarMode.values)
+              KeyedSubtree(
+                key: ValueKey('channel-bottom-bar-${mode.name}'),
+                child: appearance._choiceRow(
+                  context,
+                  mode.icon.data,
+                  AppStrings.t(mode.label),
+                  theme.channelBottomBarMode == mode,
+                  () => theme.channelBottomBarMode = mode,
+                ),
+              ),
+          ]),
+          SettingsNote(
+            text: AppStrings.t(AppStringKeys.mithkaxChannelBottomBarNote),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class ChatViewAppearanceSettingsView extends StatelessWidget {
   const ChatViewAppearanceSettingsView({super.key});
 
@@ -1568,6 +1347,25 @@ class ChatViewAppearanceSettingsView extends StatelessWidget {
       title: AppStrings.t(AppStringKeys.appearanceChatView),
       preview: const _ChatViewSettingsPreview(),
       controls: appearance._card(context, [
+        appearance._navigationRow(
+          context,
+          AppStrings.t(AppStringKeys.mithkaxStickerSizeTitle),
+          '${(theme.stickerMediaScale * 100).round()}%',
+          () => Navigator.of(context).push(
+            AppPageRoute<void>(
+              pageBuilder: (_, _, _) => const StickerSizeSettingsView(),
+            ),
+          ),
+          icon: HeroAppIcons.faceSmile.data,
+        ),
+        appearance._toggleRow(
+          context,
+          HeroAppIcons.reply.data,
+          AppStrings.t(AppStringKeys.appearanceReplySenderStyle),
+          theme.replyQuoteSenderStyle,
+          (value) => theme.replyQuoteSenderStyle = value,
+          subtitle: AppStrings.t(AppStringKeys.appearanceReplySenderStyleNote),
+        ),
         appearance._toggleRow(
           context,
           HeroAppIcons.images.data,
@@ -1631,6 +1429,24 @@ class ChatViewAppearanceSettingsView extends StatelessWidget {
           theme.alwaysShowMessageTime,
           (value) => theme.alwaysShowMessageTime = value,
         ),
+        appearance._navigationRow(
+          context,
+          AppStrings.t(AppStringKeys.channelBottomBar),
+          AppStrings.t(theme.channelBottomBarMode.label),
+          () => Navigator.of(context).push(
+            AppPageRoute<void>(
+              pageBuilder: (_, _, _) => const ChannelBottomBarSettingsView(),
+            ),
+          ),
+          icon: HeroAppIcons.bell.data,
+        ),
+        appearance._toggleRow(
+          context,
+          HeroAppIcons.eye.data,
+          AppStrings.t(AppStringKeys.channelPostStats),
+          theme.showChannelPostStats,
+          (value) => theme.showChannelPostStats = value,
+        ),
         if (!desktop)
           KeyedSubtree(
             key: const ValueKey('mobile-message-action-menu-style-row'),
@@ -1660,7 +1476,92 @@ class ChatViewAppearanceSettingsView extends StatelessWidget {
           ),
           icon: HeroAppIcons.thumbsUp.data,
         ),
+        appearance._navigationRow(
+          context,
+          AppStrings.t(AppStringKeys.doubleTapIncoming),
+          AppStrings.t(theme.doubleTapIncoming.label),
+          () => Navigator.of(context).push(
+            AppPageRoute<void>(
+              pageBuilder: (_, _, _) =>
+                  const DoubleTapActionSettingsView(outgoing: false),
+            ),
+          ),
+          icon: HeroAppIcons.faceSmile.data,
+        ),
+        appearance._navigationRow(
+          context,
+          AppStrings.t(AppStringKeys.doubleTapOutgoing),
+          AppStrings.t(theme.doubleTapOutgoing.label),
+          () => Navigator.of(context).push(
+            AppPageRoute<void>(
+              pageBuilder: (_, _, _) =>
+                  const DoubleTapActionSettingsView(outgoing: true),
+            ),
+          ),
+          icon: HeroAppIcons.paperPlane.data,
+        ),
+        appearance._toggleRow(
+          context,
+          HeroAppIcons.circleUser.data,
+          AppStrings.t(AppStringKeys.appearanceAvatarOnlineStatus),
+          theme.showAvatarOnlineStatus,
+          (value) => theme.showAvatarOnlineStatus = value,
+          subtitle: AppStrings.t(
+            AppStringKeys.appearanceAvatarOnlineStatusNote,
+          ),
+        ),
       ]),
+    );
+  }
+}
+
+/// Incoming / outgoing double-tap action picker (exteraless `DoubleTapIncoming`
+/// / `DoubleTapOutgoing`).
+class DoubleTapActionSettingsView extends StatelessWidget {
+  const DoubleTapActionSettingsView({super.key, required this.outgoing});
+
+  final bool outgoing;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = context.watch<ThemeController>();
+    const appearance = AppearanceView();
+    final selected = outgoing
+        ? theme.doubleTapOutgoing
+        : theme.doubleTapIncoming;
+    return SettingsPageScaffold(
+      key: ValueKey('double-tap-action-page-${outgoing ? 'out' : 'in'}'),
+      title: AppStrings.t(
+        outgoing
+            ? AppStringKeys.doubleTapOutgoing
+            : AppStringKeys.doubleTapIncoming,
+      ),
+      onBack: () => Navigator.of(context).pop(),
+      child: SettingsListView(
+        children: [
+          appearance._card(context, [
+            for (final action in MessageDoubleTapAction.values)
+              KeyedSubtree(
+                key: ValueKey(
+                  'double-tap-${outgoing ? 'out' : 'in'}-${action.name}',
+                ),
+                child: appearance._choiceRow(
+                  context,
+                  action.icon,
+                  AppStrings.t(action.label),
+                  selected == action,
+                  () {
+                    if (outgoing) {
+                      theme.doubleTapOutgoing = action;
+                    } else {
+                      theme.doubleTapIncoming = action;
+                    }
+                  },
+                ),
+              ),
+          ]),
+        ],
+      ),
     );
   }
 }
@@ -2038,7 +1939,7 @@ class _ChatViewQuickReactionOverlay extends StatelessWidget {
     final media = MediaQuery.of(context);
     final topSafe = media.padding.top + AppSpacing.sm;
     final bottomSafe = media.size.height - media.padding.bottom - AppSpacing.sm;
-    const barHeight = 46.0;
+    final barHeight = QuickReactionBar.heightFor(context);
     final top = anchorRect == null
         ? (media.size.height - barHeight) / 2
         : (anchorRect!.top - barHeight - AppSpacing.sm).clamp(
@@ -2587,11 +2488,13 @@ extension _DisplayAppearanceHelpers on AppearanceView {
     IconData icon,
     String label,
     bool value,
-    ValueChanged<bool>? onChanged,
-  ) {
+    ValueChanged<bool>? onChanged, {
+    String? subtitle,
+  }) {
     final enabled = onChanged != null;
     return SettingsSwitchRow(
       title: label,
+      subtitle: subtitle,
       value: value,
       leading: SettingsLeadingIcon(
         icon: AppIconData(icon),
@@ -2774,17 +2677,26 @@ class _FontCacheManagementViewState extends State<FontCacheManagementView> {
   Set<String> _activeGoogleFamilies(ThemeController theme) {
     final googleFamilies = GoogleFonts.asMap().keys.toSet();
     final active = <String>{};
-    void addIfGoogle(String? family) {
+    void addIfGoogle(String? family, {bool explicitGoogle = false}) {
       final value = family?.trim();
       if (value == null || value.isEmpty) return;
-      final decoded = decodeGoogleFontFamily(value) ?? value;
-      if (googleFamilies.contains(decoded)) active.add(decoded);
+      if (explicitGoogle) {
+        if (googleFamilies.contains(value)) active.add(value);
+        return;
+      }
+      final decoded = decodeGoogleFontFamily(value);
+      if (decoded != null) {
+        if (googleFamilies.contains(decoded)) active.add(decoded);
+        return;
+      }
+      if (theme.isLocalFontFamily(value)) return;
+      if (googleFamilies.contains(value)) active.add(value);
     }
 
     for (final family in theme.fontFallbackChain) {
       addIfGoogle(family);
     }
-    addIfGoogle(theme.monospaceFontChoice.googleFamily);
+    addIfGoogle(theme.monospaceFontChoice.googleFamily, explicitGoogle: true);
     if (theme.monospaceFontChoice.isCustom) {
       addIfGoogle(theme.customMonospaceFontFamily);
     }
@@ -3269,26 +3181,33 @@ Future<Set<String>> _cachedGoogleFontFamilies() async {
   return cached;
 }
 
-List<String> _fontTitleFallback() {
-  return switch (defaultTargetPlatform) {
-    TargetPlatform.iOS || TargetPlatform.macOS => [
-      AppFontChoice.apple.fontFamily,
-      'SF Pro',
-      'Helvetica Neue',
-      'Arial',
-    ],
-    TargetPlatform.android => const ['sans-serif', 'Roboto', 'Noto Sans'],
-    _ => const ['sans-serif', 'Arial'],
-  };
+ThemeController? _maybeThemeController(BuildContext context) {
+  try {
+    return Provider.of<ThemeController>(context, listen: false);
+  } on ProviderNotFoundException {
+    return null;
+  }
 }
 
-TextStyle _fontTitleStyle(
+List<String> _fontTitleFallback([BuildContext? context]) {
+  if (context == null) return PlatformFontDefaults.effectiveFontChain();
+  final theme = _maybeThemeController(context);
+  return PlatformFontDefaults.effectiveFontChain(
+    appLocale:
+        theme?.effectiveTypographyLocale ??
+        Localizations.maybeLocaleOf(context),
+    systemLocale: WidgetsBinding.instance.platformDispatcher.locale,
+  );
+}
+
+TextStyle _buildFontCandidateStyle(
   String family,
   TextStyle base, {
+  BuildContext? context,
   String? googleFamily,
   bool googleLoaded = false,
 }) {
-  final fallback = _fontTitleFallback();
+  final fallback = _fontTitleFallback(context);
   if (googleFamily != null && googleLoaded) {
     return GoogleFonts.getFont(
       googleFamily,
@@ -3302,64 +3221,45 @@ TextStyle _fontTitleStyle(
   );
 }
 
+TextStyle _fontTitleStyle(
+  String family,
+  TextStyle base, {
+  BuildContext? context,
+  String? googleFamily,
+  bool googleLoaded = false,
+}) => _buildFontCandidateStyle(
+  family,
+  base,
+  context: context,
+  googleFamily: googleFamily,
+  googleLoaded: googleLoaded,
+);
+
+TextStyle _fontPreviewStyle(
+  String family,
+  TextStyle base, {
+  BuildContext? context,
+  String? googleFamily,
+  bool googleLoaded = false,
+}) => _buildFontCandidateStyle(
+  family,
+  base,
+  context: context,
+  googleFamily: googleFamily,
+  googleLoaded: googleLoaded,
+);
+
 String _fontPreviewSample() => appFontPreviewText;
 
-int _popularSystemFontPriority(String family) {
-  final popular = switch (defaultTargetPlatform) {
-    TargetPlatform.iOS || TargetPlatform.macOS => [
-      AppFontChoice.apple.fontFamily,
-      'SF Pro',
-      'Helvetica Neue',
-      'Helvetica',
-      'Avenir Next',
-      'Avenir',
-      'Futura',
-      'Gill Sans',
-      'Optima',
-      'Palatino',
-      'Georgia',
-      'Times New Roman',
-      'Didot',
-      'American Typewriter',
-      'Courier New',
-      'Menlo',
-      'PingFang SC',
-      'PingFang TC',
-      'PingFang HK',
-      'Hiragino Sans',
-    ],
-    TargetPlatform.android => const [
-      'sans',
-      'sans-serif',
-      'Roboto',
-      'Noto Sans',
-      'Noto Serif',
-      'Droid Sans',
-      'monospace',
-      'serif',
-    ],
-    _ => const [
-      'Arial',
-      'Helvetica',
-      'Verdana',
-      'Tahoma',
-      'Georgia',
-      'Times New Roman',
-      'Courier New',
-      'monospace',
-      'sans-serif',
-      'serif',
-    ],
-  };
-  final exact = popular.indexWhere(
-    (font) => font.toLowerCase() == family.toLowerCase(),
-  );
-  if (exact >= 0) return exact;
-  final prefix = popular.indexWhere(
-    (font) => family.toLowerCase().startsWith(font.toLowerCase()),
-  );
-  return prefix >= 0 ? prefix : popular.length + 1;
-}
+int _popularSystemFontPriority(
+  String family, {
+  Locale? appLocale,
+  Locale? systemLocale,
+}) => PlatformFontDefaults.rankSystemFontFamily(
+  family,
+  appLocale: appLocale,
+  systemLocale: systemLocale,
+);
 
 const _googleMonospaceFamilies = {
   'Anonymous Pro',
@@ -3423,7 +3323,210 @@ bool _isSystemMonospaceFontFamily(String family) {
   final normalized = family.toLowerCase();
   return normalized.contains('mono') ||
       normalized.contains('menlo') ||
-      normalized.contains('courier');
+      normalized.contains('monaco') ||
+      normalized.contains('courier') ||
+      normalized.contains('consolas') ||
+      normalized.contains('cascadia') ||
+      normalized.contains('lucida console') ||
+      normalized.contains('fira code') ||
+      normalized.contains('source code') ||
+      normalized.contains('inconsolata');
+}
+
+bool _isSystemMonospaceEntry(SystemFontEntry entry) =>
+    entry.isMonospace ?? _isSystemMonospaceFontFamily(entry.family);
+
+/// Consumes any error from a reload future assigned to a `FutureBuilder` so
+/// refreshing local fonts never emits an unhandled async error on a derived
+/// future, while still clearing loading state once it settles.
+Future<void> _consumeFontReload<T>(
+  Future<T> future,
+  VoidCallback onSettled,
+) async {
+  try {
+    await future;
+  } catch (_) {
+    // FutureBuilder surfaces snapshot errors from [future] directly.
+  } finally {
+    onSettled();
+  }
+}
+
+class _VirtualCardRow extends StatelessWidget {
+  const _VirtualCardRow({
+    required this.first,
+    required this.last,
+    required this.child,
+  });
+
+  final bool first;
+  final bool last;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    const radius = Radius.circular(AppRadius.card);
+    return ClipRRect(
+      borderRadius: BorderRadius.vertical(
+        top: first ? radius : Radius.zero,
+        bottom: last ? radius : Radius.zero,
+      ),
+      child: ColoredBox(color: context.colors.card, child: child),
+    );
+  }
+}
+
+class _FontEmptyOrErrorPanel extends StatelessWidget {
+  const _FontEmptyOrErrorPanel({
+    required this.message,
+    this.onRetry,
+    this.onSwitchOnline,
+  });
+
+  final String message;
+  final VoidCallback? onRetry;
+  final VoidCallback? onSwitchOnline;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    return ListView(
+      padding: AppInsets.screen.copyWith(top: AppSpacing.sm),
+      children: [
+        SettingsPanel(
+          padding: const EdgeInsets.all(AppSpacing.xxl),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                message,
+                style: TextStyle(
+                  fontSize: AppTextSize.body,
+                  color: c.textSecondary,
+                ),
+              ),
+              if (onRetry != null || onSwitchOnline != null) ...[
+                const SizedBox(height: AppSpacing.md),
+                Wrap(
+                  spacing: AppSpacing.md,
+                  runSpacing: AppSpacing.sm,
+                  children: [
+                    if (onRetry != null)
+                      SettingsFilterChip(
+                        label: AppStrings.t(
+                          AppStringKeys.appearanceReloadFonts,
+                        ),
+                        selected: false,
+                        onTap: onRetry!,
+                      ),
+                    if (onSwitchOnline != null)
+                      SettingsFilterChip(
+                        label: AppStrings.t(
+                          AppStringKeys.appearanceOnlineFonts,
+                        ),
+                        selected: true,
+                        onTap: onSwitchOnline!,
+                      ),
+                  ],
+                ),
+              ],
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+enum _FontSourceTab { local, online }
+
+class _FontSourceFilterBar extends StatelessWidget {
+  const _FontSourceFilterBar({
+    required this.selected,
+    required this.localCount,
+    required this.onlineCount,
+    required this.onSelected,
+    this.onRefreshLocal,
+    this.isRefreshingLocal = false,
+  });
+
+  final _FontSourceTab selected;
+  final int localCount;
+  final int onlineCount;
+  final ValueChanged<_FontSourceTab> onSelected;
+  final VoidCallback? onRefreshLocal;
+  final bool isRefreshingLocal;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Expanded(
+              child: Wrap(
+                spacing: AppSpacing.sm,
+                runSpacing: AppSpacing.sm,
+                children: [
+                  SettingsFilterChip(
+                    label: AppStrings.t(AppStringKeys.appearanceLocalFonts),
+                    trailingLabel: '$localCount',
+                    selected: selected == _FontSourceTab.local,
+                    onTap: () => onSelected(_FontSourceTab.local),
+                  ),
+                  SettingsFilterChip(
+                    label: AppStrings.t(AppStringKeys.appearanceOnlineFonts),
+                    trailingLabel: '$onlineCount',
+                    selected: selected == _FontSourceTab.online,
+                    onTap: () => onSelected(_FontSourceTab.online),
+                  ),
+                ],
+              ),
+            ),
+            if (selected == _FontSourceTab.local && onRefreshLocal != null)
+              AppInteractiveSurface(
+                onTap: () {
+                  if (!isRefreshingLocal) onRefreshLocal!();
+                },
+                borderRadius: BorderRadius.circular(AppRadius.control),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: AppSpacing.sm,
+                    vertical: AppSpacing.xs,
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      if (isRefreshingLocal) ...[
+                        const AppActivityIndicator(size: 12),
+                        const SizedBox(width: AppSpacing.xs),
+                      ],
+                      Text(
+                        AppStrings.t(AppStringKeys.appearanceReloadFonts),
+                        style: AppTextStyle.footnote(
+                          isRefreshingLocal ? c.textTertiary : c.linkBlue,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+          ],
+        ),
+        const SizedBox(height: AppSpacing.sm),
+        Text(
+          AppStrings.t(
+            selected == _FontSourceTab.local
+                ? AppStringKeys.appearanceLocalFontsDescription
+                : AppStringKeys.appearanceOnlineFontsDescription,
+          ),
+          style: AppTextStyle.footnote(c.textTertiary).copyWith(height: 1.35),
+        ),
+      ],
+    );
+  }
 }
 
 class TextFontView extends StatelessWidget {
@@ -3490,12 +3593,6 @@ class TextFontView extends StatelessWidget {
     final c = context.colors;
     final googleFamily = decodeGoogleFontFamily(family);
     final displayFamily = displayStoredFontFamily(family);
-    TextStyle previewStyle(TextStyle base) {
-      if (googleFamily != null) {
-        return GoogleFonts.getFont(googleFamily, textStyle: base);
-      }
-      return base.copyWith(fontFamily: family);
-    }
 
     return SizedBox(
       height: AppMetric.menuRowHeight + AppSpacing.md,
@@ -3528,6 +3625,7 @@ class TextFontView extends StatelessWidget {
                         color: c.textPrimary,
                         fontWeight: FontWeight.w500,
                       ),
+                      context: context,
                       googleFamily: googleFamily,
                       googleLoaded: googleFamily != null,
                     ),
@@ -3537,11 +3635,15 @@ class TextFontView extends StatelessWidget {
                     _fontPreviewSample(),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: previewStyle(
+                    style: _fontPreviewStyle(
+                      family,
                       TextStyle(
                         fontSize: AppTextSize.footnote,
                         color: c.textSecondary,
                       ),
+                      context: context,
+                      googleFamily: googleFamily,
+                      googleLoaded: googleFamily != null,
                     ),
                   ),
                 ],
@@ -3583,7 +3685,10 @@ class TextFontView extends StatelessWidget {
               MaterialPageRoute(builder: (_) => const FontAddView()),
             );
             if (family == null || !context.mounted) return;
-            context.read<ThemeController>().addFontToFallbackChain(family);
+            context.read<ThemeController>().addFontToFallbackChain(
+              family,
+              isLocal: decodeGoogleFontFamily(family) == null,
+            );
           },
         ),
         if (theme.fontFallbackChain.isNotEmpty) ...[
@@ -3641,32 +3746,68 @@ class TextFontView extends StatelessWidget {
 }
 
 class EmojiFontPickerView extends StatefulWidget {
-  const EmojiFontPickerView({super.key});
+  const EmojiFontPickerView({super.key, this.manifestOverride});
+
+  /// Test seam: serve the picker from a fixed manifest instead of the
+  /// network. Production always leaves this null.
+  final Future<List<EmojiFontManifestEntry>>? manifestOverride;
 
   @override
   State<EmojiFontPickerView> createState() => _EmojiFontPickerViewState();
 }
 
 class _EmojiFontPickerViewState extends State<EmojiFontPickerView> {
-  static const _fallbackPreviewAsset = 'assets/emoji_preview/noto.svg';
   static const _previewAssets = {
+    'apple': 'assets/emoji_preview/apple.png',
     'noto': 'assets/emoji_preview/noto.svg',
     'noto-mono': 'assets/emoji_preview/noto-mono.svg',
     'blobmoji': 'assets/emoji_preview/blobmoji.svg',
-    'fluent': 'assets/emoji_preview/fluent.png',
-    'fluent-flat': 'assets/emoji_preview/fluent-flat.svg',
-    'fluent-mono': 'assets/emoji_preview/fluent-mono.svg',
     'twemoji': 'assets/emoji_preview/twemoji.svg',
     'openmoji': 'assets/emoji_preview/openmoji.svg',
     'emojitwo': 'assets/emoji_preview/emojitwo.svg',
     'tossface': 'assets/emoji_preview/tossface.svg',
   };
+  static const _appleKey = 'apple';
 
-  late final Future<List<EmojiFontManifestEntry>> _fonts = EmojiFontCatalog
-      .shared
-      .loadManifest(forceRefresh: true);
+  late final Future<List<EmojiFontManifestEntry>> _fonts =
+      widget.manifestOverride ?? EmojiFontCatalog.shared.loadManifest();
   String? _loadingKey;
   String? _failedKey;
+
+  /// 0..1 while the current download reports progress; null renders the
+  /// indeterminate spinner (pre-flight steps, unknown total size).
+  double? _loadingProgress;
+  // Cache sizes per key, refreshed after every download/delete so the row
+  // captions flip between 未下载 / 已下载 · size live.
+  Map<String, int>? _downloadedSizes;
+
+  @override
+  void initState() {
+    super.initState();
+    _refreshDownloadedSizes();
+  }
+
+  Future<void> _refreshDownloadedSizes() async {
+    final entries = await _fonts;
+    final sizes = <String, int>{};
+    for (final entry in entries) {
+      final size = await EmojiFontCatalog.shared.cachedFontSize(entry.key);
+      if (size != null) sizes[entry.key] = size;
+    }
+    if (mounted) setState(() => _downloadedSizes = sizes);
+  }
+
+  /// 系统默认 first, Apple second (the fork's default face), everything else
+  /// alphabetically by label.
+  List<EmojiFontManifestEntry> _sorted(List<EmojiFontManifestEntry> entries) {
+    final apple = <EmojiFontManifestEntry>[];
+    final rest = <EmojiFontManifestEntry>[];
+    for (final entry in entries) {
+      (entry.key == _appleKey ? apple : rest).add(entry);
+    }
+    rest.sort((a, b) => a.label.toLowerCase().compareTo(b.label.toLowerCase()));
+    return [...apple, ...rest];
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -3692,7 +3833,9 @@ class _EmojiFontPickerViewState extends State<EmojiFontPickerView> {
               ),
             );
           }
-          final entries = snapshot.data ?? const <EmojiFontManifestEntry>[];
+          final entries = _sorted(
+            snapshot.data ?? const <EmojiFontManifestEntry>[],
+          );
           return SettingsListView(
             children: [
               SettingsCard.rows(
@@ -3701,11 +3844,6 @@ class _EmojiFontPickerViewState extends State<EmojiFontPickerView> {
                   _systemRow(context, theme),
                   for (final entry in entries) _entryRow(context, entry, theme),
                 ],
-              ),
-              SettingsNote(
-                text: AppStrings.t(
-                  AppStringKeys.appearanceEmojiFontCatalogDescription,
-                ),
               ),
             ],
           );
@@ -3717,12 +3855,17 @@ class _EmojiFontPickerViewState extends State<EmojiFontPickerView> {
   Widget _systemRow(BuildContext context, ThemeController theme) {
     return _row(
       context,
+      key: 'system',
       title: EmojiFontChoice.system.label,
       subtitle: AppStrings.t(AppStringKeys.appearanceSystemEmojiFont),
-      preview: const _SystemEmojiPreview(),
+      preview: const _PenguinFallbackIcon(),
+      // The selection itself is the render policy — no override switch.
       selected: theme.emojiFontChoice.isSystem,
       loading: false,
+      loadingProgress: null,
       failed: false,
+      downloadedBytes: null,
+      deletable: false,
       onTap: () {
         context.read<ThemeController>().useSystemEmojiFont();
         setState(() {
@@ -3738,128 +3881,334 @@ class _EmojiFontPickerViewState extends State<EmojiFontPickerView> {
     EmojiFontManifestEntry entry,
     ThemeController theme,
   ) {
+    final downloadedBytes = _downloadedSizes?[entry.key];
     return _row(
       context,
+      key: entry.key,
       title: entry.label,
-      subtitle: [
-        entry.license,
-        if (entry.emojiVersion.isNotEmpty) 'Emoji ${entry.emojiVersion}',
-      ].where((part) => part.isNotEmpty).join(' · '),
-      preview: _EmojiPreviewImage(asset: _previewAssetForKey(entry.key)),
+      preview: _EntryEmojiPreview(
+        asset: _previewAssetForKey(entry.key),
+        entry: entry,
+      ),
       selected: theme.emojiFontChoice.key == entry.key,
       loading: _loadingKey == entry.key,
+      loadingProgress: _loadingKey == entry.key ? _loadingProgress : null,
       failed: _failedKey == entry.key,
+      // Every pack except the system row downloads on demand: the caption
+      // carries 未下载 / 已下载 · size so the storage cost is visible before
+      // the tap.
+      downloadedBytes: downloadedBytes,
+      deletable: downloadedBytes != null,
       onTap: () async {
         if (_loadingKey != null) return;
         setState(() {
           _loadingKey = entry.key;
+          _loadingProgress = null;
           _failedKey = null;
         });
         try {
-          await context.read<ThemeController>().setEmojiFont(entry);
+          await context.read<ThemeController>().setEmojiFont(
+            entry,
+            onProgress: (progress) {
+              if (!mounted || _loadingKey != entry.key) return;
+              setState(() => _loadingProgress = progress);
+            },
+          );
+          await _refreshDownloadedSizes();
         } catch (_) {
           if (mounted) setState(() => _failedKey = entry.key);
         } finally {
-          if (mounted) setState(() => _loadingKey = null);
+          if (mounted) {
+            setState(() {
+              _loadingKey = null;
+              _loadingProgress = null;
+            });
+          }
         }
       },
+      onSwipeDelete: downloadedBytes == null
+          ? null
+          : () async {
+              await EmojiFontCatalog.shared.deleteCachedFont(entry.key);
+              await _refreshDownloadedSizes();
+            },
     );
   }
 
   Widget _row(
     BuildContext context, {
+    required String key,
     required String title,
-    required String subtitle,
+    String? subtitle,
     required Widget preview,
     required bool selected,
     required bool loading,
+    required double? loadingProgress,
     required bool failed,
+    required int? downloadedBytes,
+    required bool deletable,
     required VoidCallback onTap,
+    VoidCallback? onSwipeDelete,
   }) {
     final c = context.colors;
-    return GestureDetector(
-      behavior: HitTestBehavior.opaque,
-      onTap: onTap,
-      child: SizedBox(
-        height: AppMetric.menuRowHeight + AppSpacing.md,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: AppSpacing.xxl),
-          child: Row(
-            children: [
-              SizedBox(
-                width: 30,
-                child: Semantics(
-                  label: AppStringKeys.emojiPreviewFaceWithTearsOfJoy.l10n(
-                    context,
+    late final String caption;
+    if (failed) {
+      caption = AppStrings.t(AppStringKeys.appearanceFontDownloadFailedName, {
+        'value1': title,
+      });
+    } else if (subtitle != null && subtitle.isNotEmpty) {
+      caption = subtitle;
+    } else if (downloadedBytes != null) {
+      caption = _bytesLabel(downloadedBytes);
+    } else {
+      caption = AppStrings.t(AppStringKeys.emojiFontNotDownloaded);
+    }
+    final swipeRow = _EmojiFontSwipeRow(
+      rowKey: key,
+      deleteEnabled: onSwipeDelete != null,
+      onDelete: onSwipeDelete,
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: onTap,
+        child: SizedBox(
+          height: AppMetric.menuRowHeight + AppSpacing.md,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: AppSpacing.xxl),
+            child: Row(
+              children: [
+                SizedBox(
+                  width: 30,
+                  child: Semantics(
+                    label: AppStringKeys.emojiPreviewFaceWithTearsOfJoy.l10n(
+                      context,
+                    ),
+                    image: true,
+                    child: ExcludeSemantics(child: preview),
                   ),
-                  image: true,
-                  child: ExcludeSemantics(child: preview),
                 ),
-              ),
-              const SizedBox(width: AppSpacing.lg),
-              Expanded(
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      title.l10n(context),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        fontSize: AppTextSize.bodyLarge,
-                        color: c.textPrimary,
-                        fontWeight: FontWeight.w500,
+                const SizedBox(width: AppSpacing.lg),
+                Expanded(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        title.l10n(context),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: AppTextSize.bodyLarge,
+                          color: c.textPrimary,
+                          fontWeight: FontWeight.w500,
+                        ),
                       ),
-                    ),
-                    const SizedBox(height: 2),
-                    Text(
-                      failed
-                          ? AppStrings.t(
-                              AppStringKeys.appearanceFontDownloadFailedName,
-                              {'value1': subtitle},
-                            )
-                          : subtitle,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        fontSize: AppTextSize.footnote,
-                        color: c.textSecondary,
-                      ),
-                    ),
-                  ],
+                      if (caption.isNotEmpty) ...[
+                        const SizedBox(height: 2),
+                        Text(
+                          caption,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: AppTextSize.footnote,
+                            color: c.textSecondary,
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
                 ),
-              ),
-              if (loading)
-                const SizedBox(
-                  width: AppIconSize.lg,
-                  height: AppIconSize.lg,
-                  child: CircularProgressIndicator(strokeWidth: 2),
-                )
-              else if (selected)
-                AppIcon(
-                  HeroAppIcons.check,
-                  size: AppIconSize.lg,
-                  color: AppTheme.brand,
-                ),
-            ],
+                if (loading)
+                  SizedBox(
+                    width: AppIconSize.lg,
+                    height: AppIconSize.lg,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      // A determinate ring once the first poll reports
+                      // bytes; null keeps the indeterminate spin for the
+                      // message/metadata phase.
+                      value: loadingProgress,
+                    ),
+                  )
+                else if (selected)
+                  AppIcon(
+                    HeroAppIcons.check,
+                    size: AppIconSize.lg,
+                    color: AppTheme.brand,
+                  ),
+              ],
+            ),
           ),
         ),
       ),
     );
+    return swipeRow;
   }
 
-  String _previewAssetForKey(String key) =>
-      _previewAssets[key] ?? _fallbackPreviewAsset;
+  String _bytesLabel(int bytes) {
+    final downloaded = AppStrings.t(AppStringKeys.emojiFontDownloaded);
+    final size = formatByteSize(bytes);
+    return '$downloaded · $size';
+  }
+
+  /// Keys the bundled asset map never heard of get no bundled picture —
+  /// they preview through the channel image or the system 🐧 emoji.
+  String? _previewAssetForKey(String key) => _previewAssets[key];
+}
+
+/// Formats a byte count the way the update dialog does (1 KB / 9.8 MB …).
+String formatByteSize(int bytes) {
+  if (bytes < 1024) return '$bytes B';
+  final kb = bytes / 1024;
+  if (kb < 1024) return '${kb.toStringAsFixed(kb < 10 ? 1 : 0)} KB';
+  final mb = kb / 1024;
+  if (mb < 1024) return '${mb.toStringAsFixed(mb < 10 ? 1 : 0)} MB';
+  final gb = mb / 1024;
+  return '${gb.toStringAsFixed(gb < 10 ? 1 : 0)} GB';
+}
+
+/// One row of the emoji font list: swipe LEFT on a downloaded pack to reveal
+/// a 删除 block that clears its cached font file. Reuses the chat-list swipe
+/// geometry (flush full-height block, snaps open/closed) at a smaller width.
+class _EmojiFontSwipeRow extends StatefulWidget {
+  const _EmojiFontSwipeRow({
+    required this.rowKey,
+    required this.deleteEnabled,
+    required this.onDelete,
+    required this.child,
+  });
+
+  final String rowKey;
+  final bool deleteEnabled;
+  final VoidCallback? onDelete;
+  final Widget child;
+
+  @override
+  State<_EmojiFontSwipeRow> createState() => _EmojiFontSwipeRowState();
+}
+
+class _EmojiFontSwipeRowState extends State<_EmojiFontSwipeRow>
+    with SingleTickerProviderStateMixin {
+  static const double _buttonWidth = 72;
+  // Created eagerly in initState so the Ticker is bound while the context is
+  // active (a lazy late initializer would run first in dispose and crash on
+  // a deactivated-ancestor TickerMode lookup).
+  late final AnimationController _controller;
+  double _offset = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      vsync: this,
+      duration: AppMotion.responsive,
+    );
+  }
+
+  void _animateTo(double target) {
+    _controller
+      ..stop()
+      ..value = 0
+      ..addStatusListener(_onceCompleted);
+    _controller.animateTo(target == 0 ? 0 : 1, curve: Curves.easeOutCubic);
+  }
+
+  void _onceCompleted(AnimationStatus status) {
+    if (status == AnimationStatus.completed) {
+      _controller.removeStatusListener(_onceCompleted);
+      if (!mounted) return;
+      setState(() => _offset = _targetFor(_controller.value));
+    }
+  }
+
+  double _targetFor(double t) => -_buttonWidth * t;
+
+  void _settle(double velocity) {
+    if (velocity < -520 ||
+        (velocity <= 360 && _offset < -_buttonWidth * 0.38)) {
+      _animateTo(-_buttonWidth);
+    } else {
+      _animateTo(0);
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (!widget.deleteEnabled) return widget.child;
+    final actionsRevealed = _offset != 0;
+    return ClipRect(
+      child: Stack(
+        children: [
+          GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onHorizontalDragStart: (_) {},
+            onHorizontalDragUpdate: (details) {
+              setState(
+                () => _offset = (_offset + details.delta.dx).clamp(
+                  -_buttonWidth,
+                  0.0,
+                ),
+              );
+            },
+            onHorizontalDragEnd: (details) =>
+                _settle(details.primaryVelocity ?? 0),
+            child: Transform.translate(
+              offset: Offset(_offset, 0),
+              child: widget.child,
+            ),
+          ),
+          // Must sit ABOVE the row's opaque gesture detector: below it, the
+          // row swallowed every tap and the revealed 删除 block never fired.
+          if (actionsRevealed)
+            Positioned.fill(
+              child: Align(
+                alignment: Alignment.centerRight,
+                child: SizedBox(
+                  width: _buttonWidth,
+                  child: GestureDetector(
+                    onTap: () {
+                      widget.onDelete?.call();
+                      _animateTo(0);
+                    },
+                    child: Container(
+                      width: _buttonWidth,
+                      color: const Color(0xFFFA5151),
+                      alignment: Alignment.center,
+                      child: Text(
+                        AppStrings.t(AppStringKeys.chatDelete),
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(
+                          fontSize: AppTextSize.body,
+                          color: Colors.white,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
 }
 
 /// Draws the preview glyph with the platform emoji font itself, so the row
 /// shows what the system default actually looks like instead of a bundled
 /// picture of somebody else's emoji set.
 class _SystemEmojiPreview extends StatelessWidget {
-  const _SystemEmojiPreview();
+  const _SystemEmojiPreview({this.glyph = _faceWithTearsOfJoy});
 
   static const _faceWithTearsOfJoy = '\u{1F602}';
+  static const penguin = '\u{1F427}';
+
+  /// The glyph drawn with the platform emoji font.
+  final String glyph;
 
   @override
   Widget build(BuildContext context) {
@@ -3869,7 +4218,7 @@ class _SystemEmojiPreview extends StatelessWidget {
       height: 26,
       child: Center(
         child: Text(
-          _faceWithTearsOfJoy,
+          glyph,
           textAlign: TextAlign.center,
           style: TextStyle(
             fontSize: 22,
@@ -3883,113 +4232,69 @@ class _SystemEmojiPreview extends StatelessWidget {
   }
 }
 
-class _EmojiPreviewImage extends StatelessWidget {
-  const _EmojiPreviewImage({required this.asset});
-
-  final String asset;
+/// The last-resort preview face: the system's own 🐧 emoji glyph — a
+/// penguin, but drawn by the platform emoji font, never the fork logo.
+class _PenguinFallbackIcon extends StatelessWidget {
+  const _PenguinFallbackIcon();
 
   @override
   Widget build(BuildContext context) {
-    if (asset.endsWith('.svg')) {
-      return SvgPicture.asset(
-        asset,
+    return const _SystemEmojiPreview(glyph: _SystemEmojiPreview.penguin);
+  }
+}
+
+/// A row preview that prefers the pack's real channel preview image (the
+/// @mithka_metadata preview PNG named by the catalog message) and falls back
+/// to the bundled asset map — the system 🐧 emoji when even that misses.
+/// This is what keeps channel-served packs with keys the bundled map never
+/// heard of (blob, google, cursed…) from rendering as a branded logo.
+class _EntryEmojiPreview extends StatefulWidget {
+  const _EntryEmojiPreview({required this.asset, required this.entry});
+
+  final String? asset;
+  final EmojiFontManifestEntry entry;
+
+  @override
+  State<_EntryEmojiPreview> createState() => _EntryEmojiPreviewState();
+}
+
+class _EntryEmojiPreviewState extends State<_EntryEmojiPreview> {
+  String? _channelPath;
+  bool _resolved = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadChannelPreview();
+  }
+
+  Future<void> _loadChannelPreview() async {
+    final file = await EmojiFontCatalog.shared.channelPreviewFile(widget.entry);
+    if (!mounted) return;
+    setState(() {
+      _resolved = true;
+      if (file != null) _channelPath = file.path;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (!_resolved) {
+      return const SizedBox(width: 26, height: 26);
+    }
+    final channelPath = _channelPath;
+    if (channelPath != null) {
+      return Image.file(
+        File(channelPath),
         width: 26,
         height: 26,
-        placeholderBuilder: (_) => const _TearJoyFallbackIcon(),
-        errorBuilder: (_, _, _) => const _TearJoyFallbackIcon(),
+        errorBuilder: (_, _, _) => const _PenguinFallbackIcon(),
       );
     }
-    return Image.asset(
-      asset,
-      width: 26,
-      height: 26,
-      errorBuilder: (_, _, _) => const _TearJoyFallbackIcon(),
-    );
+    // No channel preview: always fall back to the system 🐧 emoji, never a
+    // bundled branded asset (which may render 😂 etc.).
+    return const _PenguinFallbackIcon();
   }
-}
-
-class _TearJoyFallbackIcon extends StatelessWidget {
-  const _TearJoyFallbackIcon();
-
-  @override
-  Widget build(BuildContext context) {
-    return const SizedBox(
-      width: 26,
-      height: 26,
-      child: CustomPaint(painter: _TearJoyFallbackPainter()),
-    );
-  }
-}
-
-class _TearJoyFallbackPainter extends CustomPainter {
-  const _TearJoyFallbackPainter();
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final face = Paint()..color = const Color(0xFFFFD447);
-    final stroke = Paint()
-      ..color = const Color(0xFF5A3210)
-      ..style = PaintingStyle.stroke
-      ..strokeCap = StrokeCap.round
-      ..strokeWidth = size.width * 0.08;
-    final tear = Paint()..color = const Color(0xFF37A8FF);
-    final center = Offset(size.width / 2, size.height / 2);
-    final radius = size.shortestSide * 0.43;
-    canvas.drawCircle(center, radius, face);
-
-    canvas.drawArc(
-      Rect.fromCenter(
-        center: Offset(size.width * 0.34, size.height * 0.39),
-        width: size.width * 0.28,
-        height: size.height * 0.18,
-      ),
-      0.15,
-      2.6,
-      false,
-      stroke,
-    );
-    canvas.drawArc(
-      Rect.fromCenter(
-        center: Offset(size.width * 0.66, size.height * 0.39),
-        width: size.width * 0.28,
-        height: size.height * 0.18,
-      ),
-      0.4,
-      2.6,
-      false,
-      stroke,
-    );
-    canvas.drawArc(
-      Rect.fromCenter(
-        center: Offset(size.width * 0.5, size.height * 0.55),
-        width: size.width * 0.48,
-        height: size.height * 0.34,
-      ),
-      0.1,
-      2.95,
-      false,
-      stroke,
-    );
-    canvas.drawOval(
-      Rect.fromCenter(
-        center: Offset(size.width * 0.18, size.height * 0.58),
-        width: size.width * 0.18,
-        height: size.height * 0.28,
-      ),
-      tear,
-    );
-    canvas.drawOval(
-      Rect.fromCenter(
-        center: Offset(size.width * 0.82, size.height * 0.58),
-        width: size.width * 0.18,
-        height: size.height * 0.28,
-      ),
-      tear,
-    );
-  }
-
-  @override
-  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
 }
 
 class FontAddView extends StatefulWidget {
@@ -4000,12 +4305,20 @@ class FontAddView extends StatefulWidget {
 }
 
 class _FontAddViewState extends State<FontAddView> {
-  late final Future<List<_FontCandidate>> _fonts = _loadFonts();
+  Future<List<_FontCandidate>>? _fonts;
+  bool _reloadingLocalFonts = false;
+  _FontSourceTab _sourceTab = _FontSourceTab.local;
   String _query = '';
   String? _loadingGoogleFamily;
   String? _failedGoogleFamily;
   Timer? _searchDebounce;
   final TextEditingController _searchController = TextEditingController();
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _fonts ??= _loadFontsForContext();
+  }
 
   @override
   void dispose() {
@@ -4014,17 +4327,50 @@ class _FontAddViewState extends State<FontAddView> {
     super.dispose();
   }
 
-  Future<List<_FontCandidate>> _loadFonts() async {
-    final systemFonts = await SystemFontCatalog.loadFonts();
+  void _reloadLocalFonts() {
+    if (_reloadingLocalFonts) return;
+    final next = _loadFontsForContext();
+    setState(() {
+      _reloadingLocalFonts = true;
+      _fonts = next;
+    });
+    unawaited(
+      _consumeFontReload(next, () {
+        if (mounted) setState(() => _reloadingLocalFonts = false);
+      }),
+    );
+  }
+
+  Future<List<_FontCandidate>> _loadFontsForContext() {
+    final theme = _maybeThemeController(context);
+    return _loadFonts(
+      appLocale:
+          theme?.effectiveTypographyLocale ??
+          Localizations.maybeLocaleOf(context),
+      systemLocale: WidgetsBinding.instance.platformDispatcher.locale,
+    );
+  }
+
+  Future<List<_FontCandidate>> _loadFonts({
+    Locale? appLocale,
+    Locale? systemLocale,
+  }) async {
+    final systemEntries = await SystemFontCatalog.loadFontEntries();
     final cachedGoogleFamilies = await _cachedGoogleFontFamilies();
     final candidates = <_FontCandidate>[
-      for (final font in systemFonts)
+      for (final entry in systemEntries)
         _FontCandidate(
-          label: font,
-          family: font,
+          label: entry.displayName != entry.family
+              ? '${entry.displayName} (${entry.family})'
+              : entry.displayName,
+          family: entry.family,
           preview: _fontPreviewSample(),
           source: AppStringKeys.appearanceSystem,
-          priority: _popularSystemFontPriority(font),
+          priority: _popularSystemFontPriority(
+            entry.family,
+            appLocale: appLocale,
+            systemLocale: systemLocale,
+          ),
         ),
       for (final family in GoogleFonts.asMap().keys)
         _FontCandidate(
@@ -4050,75 +4396,111 @@ class _FontAddViewState extends State<FontAddView> {
     return SettingsPageScaffold(
       title: AppStrings.t(AppStringKeys.appearanceAddFont),
       onBack: () => Navigator.of(context).pop(),
-      child: Column(
-        children: [
-          Padding(
-            padding: AppInsets.screen.copyWith(bottom: AppSpacing.sm),
-            child: SettingsSearchField(
-              controller: _searchController,
-              hintText: AppStringKeys.appearanceSearchFont,
-              // Each filter pass scans the ~1900 Google families; a keystroke
-              // burst should only pay for the query the user settles on.
-              onChanged: (value) {
-                final next = value.trim();
-                _searchDebounce?.cancel();
-                if (next == _query) return;
-                _searchDebounce = Timer(
-                  const Duration(milliseconds: 150),
-                  () => setState(() => _query = next),
-                );
-              },
-            ),
-          ),
-          Expanded(
-            child: FutureBuilder<List<_FontCandidate>>(
-              future: _fonts,
-              builder: (context, snapshot) {
-                if (!snapshot.hasData) {
-                  return const Center(child: AppActivityIndicator(size: 24));
-                }
-                final query = _query.toLowerCase();
-                final fonts = snapshot.data!
-                    .where(
-                      (font) =>
-                          query.isEmpty ||
-                          font.lowerLabel.contains(query) ||
-                          font.lowerFamily.contains(query),
-                    )
-                    .toList();
-                return _fontList(context, fonts);
-              },
-            ),
-          ),
-        ],
+      child: FutureBuilder<List<_FontCandidate>>(
+        future: _fonts,
+        builder: (context, snapshot) {
+          final allCandidates = snapshot.data ?? const <_FontCandidate>[];
+          final query = _query.toLowerCase();
+          final localMatches = <_FontCandidate>[];
+          final onlineMatches = <_FontCandidate>[];
+          var totalLocalCount = 0;
+          for (final font in allCandidates) {
+            if (!font.google) totalLocalCount++;
+            final matches =
+                query.isEmpty ||
+                font.lowerLabel.contains(query) ||
+                font.lowerFamily.contains(query);
+            if (!matches) continue;
+            (font.google ? onlineMatches : localMatches).add(font);
+          }
+          final visibleFonts = _sourceTab == _FontSourceTab.local
+              ? localMatches
+              : onlineMatches;
+          return Column(
+            children: [
+              Padding(
+                padding: AppInsets.screen.copyWith(bottom: AppSpacing.sm),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    SettingsSearchField(
+                      controller: _searchController,
+                      hintText: AppStringKeys.appearanceSearchFont,
+                      // Each filter pass scans the ~1900 Google families; a
+                      // keystroke burst should only pay for the query the user
+                      // settles on.
+                      onChanged: (value) {
+                        final next = value.trim();
+                        _searchDebounce?.cancel();
+                        if (next == _query) return;
+                        _searchDebounce = Timer(
+                          const Duration(milliseconds: 150),
+                          () => setState(() => _query = next),
+                        );
+                      },
+                    ),
+                    if (snapshot.hasData) ...[
+                      const SizedBox(height: AppSpacing.md),
+                      _FontSourceFilterBar(
+                        selected: _sourceTab,
+                        localCount: localMatches.length,
+                        onlineCount: onlineMatches.length,
+                        onSelected: (tab) => setState(() => _sourceTab = tab),
+                        onRefreshLocal: _reloadLocalFonts,
+                        isRefreshingLocal: _reloadingLocalFonts,
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+              Expanded(
+                child: snapshot.hasError && !snapshot.hasData
+                    ? _FontEmptyOrErrorPanel(
+                        message: AppStrings.t(
+                          AppStringKeys.appearanceNoLocalFonts,
+                        ),
+                        onRetry: _reloadLocalFonts,
+                      )
+                    : !snapshot.hasData
+                    ? const Center(child: AppActivityIndicator(size: 24))
+                    : _fontList(
+                        context,
+                        visibleFonts,
+                        hasAnyLocalFonts: totalLocalCount > 0,
+                      ),
+              ),
+            ],
+          );
+        },
       ),
     );
   }
 
-  Widget _fontList(BuildContext context, List<_FontCandidate> fonts) {
+  Widget _fontList(
+    BuildContext context,
+    List<_FontCandidate> fonts, {
+    required bool hasAnyLocalFonts,
+  }) {
     final c = context.colors;
     if (fonts.isEmpty) {
-      return ListView(
-        padding: AppInsets.screen.copyWith(top: AppSpacing.sm),
-        children: [
-          SettingsPanel(
-            padding: const EdgeInsets.all(AppSpacing.xxl),
-            child: Text(
-              AppStrings.t(AppStringKeys.appearanceNoMatchingFonts),
-              style: TextStyle(
-                fontSize: AppTextSize.body,
-                color: c.textSecondary,
-              ),
-            ),
-          ),
-        ],
+      final isMissingLocal =
+          _sourceTab == _FontSourceTab.local && !hasAnyLocalFonts;
+      return _FontEmptyOrErrorPanel(
+        message: AppStrings.t(
+          isMissingLocal
+              ? AppStringKeys.appearanceNoLocalFonts
+              : AppStringKeys.appearanceNoMatchingFonts,
+        ),
+        onRetry: isMissingLocal ? _reloadLocalFonts : null,
+        onSwitchOnline: isMissingLocal
+            ? () => setState(() => _sourceTab = _FontSourceTab.online)
+            : null,
       );
     }
     return ListView.separated(
       padding: AppInsets.screen.copyWith(top: AppSpacing.sm),
       itemCount: fonts.length,
-      itemBuilder: (context, index) => _virtualRow(
-        context,
+      itemBuilder: (context, index) => _VirtualCardRow(
         first: index == 0,
         last: index == fonts.length - 1,
         child: _fontRow(context, fonts[index]),
@@ -4127,22 +4509,6 @@ class _FontAddViewState extends State<FontAddView> {
         color: c.card,
         child: const InsetDivider(leadingInset: AppSpacing.xxl),
       ),
-    );
-  }
-
-  Widget _virtualRow(
-    BuildContext context, {
-    required bool first,
-    required bool last,
-    required Widget child,
-  }) {
-    const radius = Radius.circular(AppRadius.card);
-    return ClipRRect(
-      borderRadius: BorderRadius.vertical(
-        top: first ? radius : Radius.zero,
-        bottom: last ? radius : Radius.zero,
-      ),
-      child: ColoredBox(color: context.colors.card, child: child),
     );
   }
 
@@ -4169,6 +4535,7 @@ class _FontAddViewState extends State<FontAddView> {
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: font.titleStyle(
+                        context,
                         TextStyle(
                           fontSize: AppTextSize.bodyLarge,
                           color: c.textPrimary,
@@ -4182,6 +4549,7 @@ class _FontAddViewState extends State<FontAddView> {
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: font.previewStyle(
+                        context,
                         TextStyle(
                           fontSize: AppTextSize.footnote,
                           color: c.textSecondary,
@@ -4274,20 +4642,24 @@ class _FontCandidate {
   String get selectionFamily =>
       google ? encodeGoogleFontFamily(family) : family;
 
-  TextStyle titleStyle(TextStyle base) {
+  TextStyle titleStyle(BuildContext context, TextStyle base) {
     return _fontTitleStyle(
       family,
       base,
+      context: context,
       googleFamily: google ? family : null,
       googleLoaded: downloaded,
     );
   }
 
-  TextStyle previewStyle(TextStyle base) {
-    if (google) {
-      return downloaded ? GoogleFonts.getFont(family, textStyle: base) : base;
-    }
-    return base.copyWith(fontFamily: family);
+  TextStyle previewStyle(BuildContext context, TextStyle base) {
+    return _fontPreviewStyle(
+      family,
+      base,
+      context: context,
+      googleFamily: google ? family : null,
+      googleLoaded: downloaded,
+    );
   }
 
   int get sourceOrder => switch (source) {
@@ -4327,18 +4699,29 @@ class _MonoFontCandidate {
     return 'system:$family';
   }
 
-  TextStyle previewStyle(TextStyle base, {required bool selected}) {
-    if (google && (selected || downloaded)) {
-      return GoogleFonts.getFont(family, textStyle: base);
-    }
-    if (google) return base;
-    return base.copyWith(fontFamily: family);
+  TextStyle previewStyle(
+    BuildContext context,
+    TextStyle base, {
+    required bool selected,
+  }) {
+    return _fontPreviewStyle(
+      family,
+      base,
+      context: context,
+      googleFamily: google ? family : null,
+      googleLoaded: selected || downloaded,
+    );
   }
 
-  TextStyle titleStyle(TextStyle base, {required bool selected}) {
+  TextStyle titleStyle(
+    BuildContext context,
+    TextStyle base, {
+    required bool selected,
+  }) {
     return _fontTitleStyle(
       family,
       base,
+      context: context,
       googleFamily: google ? family : null,
       googleLoaded: selected || downloaded,
     );
@@ -4354,43 +4737,110 @@ class MonospaceFontPickerView extends StatefulWidget {
 }
 
 class _MonospaceFontPickerViewState extends State<MonospaceFontPickerView> {
-  late final Future<List<_MonoFontCandidate>> _fonts = _loadFonts();
+  late Future<List<_MonoFontCandidate>> _fonts = _loadFonts();
+  bool _reloadingLocalFonts = false;
+  _FontSourceTab? _sourceTab;
   String? _loadingGoogleFamily;
   String? _failedGoogleFamily;
+
+  void _reloadLocalFonts() {
+    if (_reloadingLocalFonts) return;
+    final next = _loadFonts();
+    setState(() {
+      _reloadingLocalFonts = true;
+      _fonts = next;
+    });
+    unawaited(
+      _consumeFontReload(next, () {
+        if (mounted) setState(() => _reloadingLocalFonts = false);
+      }),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
     final theme = context.watch<ThemeController>();
     final selectedKey = _selectedKey(theme);
+    final activeTab =
+        _sourceTab ??
+        (selectedKey.startsWith('google:')
+            ? _FontSourceTab.online
+            : _FontSourceTab.local);
     return SettingsPageScaffold(
       title: AppStrings.t(AppStringKeys.appearanceMonospaceFont),
       onBack: () => Navigator.of(context).pop(),
       child: FutureBuilder<List<_MonoFontCandidate>>(
         future: _fonts,
         builder: (context, snapshot) {
+          if (snapshot.hasError && !snapshot.hasData) {
+            return _FontEmptyOrErrorPanel(
+              message: AppStrings.t(AppStringKeys.appearanceNoLocalFonts),
+              onRetry: _reloadLocalFonts,
+            );
+          }
           if (!snapshot.hasData) {
             return const Center(child: AppActivityIndicator(size: 24));
           }
-          return _fontList(context, snapshot.data!, selectedKey);
+          final allFonts = snapshot.data!;
+          final localFonts = <_MonoFontCandidate>[];
+          final onlineFonts = <_MonoFontCandidate>[];
+          for (final font in allFonts) {
+            (font.google ? onlineFonts : localFonts).add(font);
+          }
+          final visibleFonts = activeTab == _FontSourceTab.local
+              ? localFonts
+              : onlineFonts;
+          return Column(
+            children: [
+              Padding(
+                padding: AppInsets.screen.copyWith(bottom: AppSpacing.sm),
+                child: _FontSourceFilterBar(
+                  selected: activeTab,
+                  localCount: localFonts.length,
+                  onlineCount: onlineFonts.length,
+                  onSelected: (tab) => setState(() => _sourceTab = tab),
+                  onRefreshLocal: _reloadLocalFonts,
+                  isRefreshingLocal: _reloadingLocalFonts,
+                ),
+              ),
+              Expanded(
+                child: _fontList(
+                  context,
+                  visibleFonts,
+                  selectedKey,
+                  isLocalTab: activeTab == _FontSourceTab.local,
+                ),
+              ),
+            ],
+          );
         },
       ),
     );
   }
 
   Future<List<_MonoFontCandidate>> _loadFonts() async {
-    final systemFonts = await SystemFontCatalog.loadFonts();
+    final systemEntries = await SystemFontCatalog.loadFontEntries();
     final cachedGoogleFamilies = await _cachedGoogleFontFamilies();
+    final preferredLocal = _preferredPlatformMonospaceFonts();
+    final seenLocalFamilies = {
+      for (final item in preferredLocal)
+        if (item.choice != AppMonospaceFontChoice.system)
+          item.family.toLowerCase(),
+    };
     final candidates = <_MonoFontCandidate>[
-      ..._preferredPlatformMonospaceFonts(),
+      ...preferredLocal,
       ..._googleMonospaceFonts(cachedGoogleFamilies),
-      for (final family in systemFonts.where(_isSystemMonospaceFontFamily))
-        _MonoFontCandidate(
-          label: family,
-          family: family,
-          preview: appMonospaceFontPreviewText,
-          source: AppStringKeys.appearanceSystem,
-          priority: _systemMonospacePriority(family),
-        ),
+      for (final entry in systemEntries.where(_isSystemMonospaceEntry))
+        if (seenLocalFamilies.add(entry.family.toLowerCase()))
+          _MonoFontCandidate(
+            label: entry.displayName != entry.family
+                ? '${entry.displayName} (${entry.family})'
+                : entry.displayName,
+            family: entry.family,
+            preview: appMonospaceFontPreviewText,
+            source: AppStringKeys.appearanceSystem,
+            priority: _systemMonospacePriority(entry.family),
+          ),
     ];
     final byKey = <String, _MonoFontCandidate>{};
     for (final candidate in candidates) {
@@ -4408,6 +4858,7 @@ class _MonospaceFontPickerViewState extends State<MonospaceFontPickerView> {
   List<_MonoFontCandidate> _preferredPlatformMonospaceFonts() {
     final choices = switch (defaultTargetPlatform) {
       TargetPlatform.iOS || TargetPlatform.macOS => const [
+        AppMonospaceFontChoice.system,
         AppMonospaceFontChoice.sfMono,
         AppMonospaceFontChoice.menlo,
         AppMonospaceFontChoice.courierNew,
@@ -4475,6 +4926,20 @@ class _MonospaceFontPickerViewState extends State<MonospaceFontPickerView> {
         'Roboto Mono',
         'Noto Sans Mono',
       ],
+      TargetPlatform.windows => const [
+        'Consolas',
+        'Cascadia Mono',
+        'Cascadia Code',
+        'Courier New',
+        'Lucida Console',
+      ],
+      TargetPlatform.linux => const [
+        'monospace',
+        'DejaVu Sans Mono',
+        'Liberation Mono',
+        'Ubuntu Mono',
+        'Noto Sans Mono',
+      ],
       _ => const ['monospace', 'Courier New'],
     };
     final exact = priorities.indexWhere((value) => value == family);
@@ -4521,9 +4986,23 @@ class _MonospaceFontPickerViewState extends State<MonospaceFontPickerView> {
   Widget _fontList(
     BuildContext context,
     List<_MonoFontCandidate> fonts,
-    String selectedKey,
-  ) {
+    String selectedKey, {
+    required bool isLocalTab,
+  }) {
     final c = context.colors;
+    if (fonts.isEmpty) {
+      return _FontEmptyOrErrorPanel(
+        message: AppStrings.t(
+          isLocalTab
+              ? AppStringKeys.appearanceNoLocalFonts
+              : AppStringKeys.appearanceNoMatchingFonts,
+        ),
+        onRetry: isLocalTab ? _reloadLocalFonts : null,
+        onSwitchOnline: isLocalTab
+            ? () => setState(() => _sourceTab = _FontSourceTab.online)
+            : null,
+      );
+    }
     return ListView.separated(
       padding: const EdgeInsets.fromLTRB(
         AppSpacing.lg,
@@ -4534,8 +5013,7 @@ class _MonospaceFontPickerViewState extends State<MonospaceFontPickerView> {
       itemCount: fonts.length,
       itemBuilder: (context, index) {
         final font = fonts[index];
-        return _virtualRow(
-          context,
+        return _VirtualCardRow(
           first: index == 0,
           last: index == fonts.length - 1,
           child: _fontRow(
@@ -4552,10 +5030,10 @@ class _MonospaceFontPickerViewState extends State<MonospaceFontPickerView> {
                 _trackGoogleFontLoad(null);
                 return;
               }
-              theme.customMonospaceFontFamily = font.google
-                  ? encodeGoogleFontFamily(font.family)
-                  : font.family;
-              theme.monospaceFontChoice = AppMonospaceFontChoice.custom;
+              theme.setCustomMonospaceFont(
+                font.google ? encodeGoogleFontFamily(font.family) : font.family,
+                isLocal: !font.google,
+              );
               _trackGoogleFontLoad(font.google ? font.family : null);
             },
           ),
@@ -4565,22 +5043,6 @@ class _MonospaceFontPickerViewState extends State<MonospaceFontPickerView> {
         color: c.card,
         child: const InsetDivider(leadingInset: AppSpacing.xxl),
       ),
-    );
-  }
-
-  Widget _virtualRow(
-    BuildContext context, {
-    required bool first,
-    required bool last,
-    required Widget child,
-  }) {
-    const radius = Radius.circular(AppRadius.card);
-    return ClipRRect(
-      borderRadius: BorderRadius.vertical(
-        top: first ? radius : Radius.zero,
-        bottom: last ? radius : Radius.zero,
-      ),
-      child: ColoredBox(color: context.colors.card, child: child),
     );
   }
 
@@ -4612,6 +5074,7 @@ class _MonospaceFontPickerViewState extends State<MonospaceFontPickerView> {
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: font.titleStyle(
+                        context,
                         TextStyle(
                           fontSize: AppTextSize.bodyLarge,
                           color: c.textPrimary,
@@ -4626,6 +5089,7 @@ class _MonospaceFontPickerViewState extends State<MonospaceFontPickerView> {
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: font.previewStyle(
+                        context,
                         TextStyle(
                           fontSize: AppTextSize.footnote,
                           color: c.textSecondary,
@@ -4648,8 +5112,8 @@ class _MonospaceFontPickerViewState extends State<MonospaceFontPickerView> {
                   color: c.textTertiary,
                 ),
               ),
-              const SizedBox(width: AppSpacing.md),
               if (loading) ...[
+                const SizedBox(width: AppSpacing.md),
                 SizedBox(
                   width: 48,
                   child: LinearProgressIndicator(
@@ -4658,24 +5122,15 @@ class _MonospaceFontPickerViewState extends State<MonospaceFontPickerView> {
                     backgroundColor: c.divider,
                   ),
                 ),
-                const SizedBox(width: AppSpacing.md),
               ],
-              if (!loading && failed) ...[
-                Text(
-                  AppStrings.t(AppStringKeys.appearanceDownloadFailed),
-                  style: TextStyle(
-                    fontSize: AppTextSize.footnote,
-                    color: c.textTertiary,
-                  ),
-                ),
+              if (selected) ...[
                 const SizedBox(width: AppSpacing.md),
-              ],
-              if (selected)
                 AppIcon(
                   HeroAppIcons.check,
                   size: AppIconSize.lg,
                   color: AppTheme.brand,
                 ),
+              ],
             ],
           ),
         ),

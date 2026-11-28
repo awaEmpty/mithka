@@ -1,10 +1,8 @@
 import 'dart:async';
 import 'dart:io';
-
 import 'package:flutter/material.dart';
-
 import '../chat/chat_picker_view.dart';
-import '../chat/image_edit_view.dart';
+import '../chat/media/image_edit_view.dart';
 import '../components/app_dialog.dart';
 import '../components/app_icons.dart';
 import '../components/confirm_dialog.dart';
@@ -13,7 +11,7 @@ import '../components/toast.dart';
 import '../components/ui_components.dart';
 import '../l10n/app_localizations.dart';
 import '../media/app_asset_picker.dart';
-import '../settings/edit_field_view.dart';
+import '../settings/profile_account/edit_field_view.dart';
 import '../tdlib/json_helpers.dart';
 import '../tdlib/td_client.dart';
 import '../tdlib/td_models.dart';

@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-
 import '../components/app_icons.dart';
 import 'call_manager.dart';
 import 'call_screen.dart';

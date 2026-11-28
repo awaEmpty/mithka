@@ -8,20 +8,18 @@
 //
 
 import 'dart:async';
-
 import 'package:flutter/material.dart';
 import 'package:mithka/l10n/app_localizations.dart';
 import 'package:provider/provider.dart';
-
 import '../app/ipad_window_chrome.dart';
 import '../app/primary_chat_launcher.dart';
-import '../chat/telegram_link.dart';
+import '../chat/links_search/telegram_link.dart';
 import '../components/app_icons.dart';
 import '../components/icon_grid.dart';
 import '../components/photo_avatar.dart';
 import '../components/toast.dart';
 import '../profile/profile_detail_view.dart';
-import '../settings/edit_field_view.dart';
+import '../settings/profile_account/edit_field_view.dart';
 import '../tdlib/json_helpers.dart';
 import '../tdlib/td_client.dart';
 import '../tdlib/td_models.dart';

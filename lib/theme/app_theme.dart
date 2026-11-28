@@ -9,9 +9,7 @@
 //
 
 import 'dart:math' as math;
-
 import 'package:flutter/material.dart';
-
 import '../platform/adaptive_platform.dart';
 
 Color _hex(int rgb, [double opacity = 1]) =>
@@ -79,7 +77,55 @@ abstract final class AppTextSize {
       isDesktopTargetPlatform(platform) ? tiny : caption;
 
   static double messageBody([TargetPlatform? platform]) =>
-      isDesktopTargetPlatform(platform) ? callout : title;
+      isDesktopTargetPlatform(platform) ? callout : bodyLarge;
+
+  /// exteraless's message typography is one ladder derived from the chat text
+  /// size (`Theme.createCommonMessageResources()` reads
+  /// `SharedConfig.fontSize`, whose default is the 16 this app calls
+  /// [bodyLarge]). These helpers carry that ladder so every message role
+  /// shrinks or grows together instead of each call site inventing a number.
+  /// `chat_namePaint` / `chat_replyTextPaint` / `chat_forwardNamePaint` use
+  /// `(2 * fontSize + 10) / 3`.
+  static double chatSecondary(double base) => (2 * base + 10) / 3;
+
+  /// `chat_timePaint` is a fixed 12 at every chat text size.
+  static const double chatTime = caption;
+
+  /// `chat_msgTextCode{,2,3}Paint`: a preformatted run shrinks with its own
+  /// length — 14 / 13 / 11 at the default 16 — and never below 10.
+  static double messageCode(double base, int length) => math.max(
+    10,
+    base -
+        (length > 220
+            ? 5
+            : length > 80
+            ? 3
+            : 2),
+  );
+
+  /// Inline code is `CodeHighlighting.Span(smallerSize: true)`, i.e. the body
+  /// size minus `getTextSizeDecrement(length)`.
+  static double messageInlineCode(double base, int length) => math.max(
+    10,
+    base -
+        (length > 120
+            ? 5
+            : length > 50
+            ? 3
+            : 2),
+  );
+
+  /// `TextLayoutBlock.layoutCode`: the language label is one step under the
+  /// body size, minus half its own decrement again.
+  static double messageCodeLanguage(double base, int length) {
+    final decrement = length > 120
+        ? 5
+        : length > 50
+        ? 3
+        : 2;
+    // Integer division, like the Java original: 5 / 2 == 2.
+    return math.max(10, base - 1 - decrement ~/ 2);
+  }
 }
 
 abstract final class AppTextWeight {
@@ -144,13 +190,15 @@ abstract final class AppTextStyle {
   }) => boldText ? style.copyWith(fontWeight: FontWeight.bold) : style;
 
   /// Message-body-sized text runs only, never an entire bubble subtree.
-  /// Overrides inherited leading (which otherwise produces about 24pt pitch
-  /// at 17pt) without changing font selection, weight, tracking or OS scaling.
+  /// Overrides inherited leading without changing font selection, weight,
+  /// tracking or OS scaling. The pitch follows exteraless: a 16pt body lays out
+  /// at its ~1.17 font metrics there, i.e. ~19–20pt, not the 22pt the old 17pt
+  /// body used.
   static TextStyle messageBody(Color color, {TargetPlatform? platform}) =>
       TextStyle(
         fontSize: AppTextSize.messageBody(platform),
         color: color,
-        height: _isMobileChatPlatform(platform) ? 22 / 17 : null,
+        height: _isMobileChatPlatform(platform) ? 20 / 16 : null,
         leadingDistribution: _isMobileChatPlatform(platform)
             ? TextLeadingDistribution.even
             : null,
@@ -399,8 +447,17 @@ abstract final class AppMetric {
       : AppTextSize.bodyLarge;
   static double popupMenuInset([TargetPlatform? platform]) =>
       isDesktopTargetPlatform(platform) ? AppSpacing.lg : AppSpacing.xxl;
-  static const double splashPenguinSize = 192;
+
+  /// The app mark on the startup screen.
+  static const double splashMarkSize = 192;
   static const double splashSpinnerSize = 24;
+
+  /// A chosen launcher icon on the startup screen: about the size Android's
+  /// own splash draws it at, so handing over from that splash does not jump.
+  static const double splashIconSize = 160;
+
+  /// Corner radius of [splashIconSize]: the icon picker's 18 pt at 80 pt.
+  static const double splashIconRadius = 36;
   static const double divider = 0.5;
   static const double selectedBorder = 2.5;
   static const double badgeOutlinePadding = 1.5;

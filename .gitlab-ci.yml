@@ -1,0 +1,41 @@
+# GitLab mirror of the GitHub Actions quality gate.
+#
+# The GitHub workflows under .github/workflows/ stay in the tree and remain the
+# release pipeline (quality.yml, mithkax-android.yml, mithkax-desktop.yml).
+# This file runs the source checks on the self-hosted `instabox` runner, which
+# already carries the pinned Flutter SDK; store and release jobs stay on GitHub.
+
+workflow:
+  auto_cancel:
+    on_new_commit: interruptible
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+    - if: '$CI_PIPELINE_SOURCE == "web"'
+
+stages:
+  - quality
+
+variables:
+  PUB_CACHE: "/data/home/.pub-cache"
+  FLUTTER_SUPPRESS_ANALYTICS: "true"
+
+quality:
+  stage: quality
+  tags:
+    - instabox
+  timeout: 60m
+  interruptible: true
+  before_script:
+    - export PATH="/data/flutter/bin:$PATH"
+    - flutter --version
+  script:
+    - cp lib/config/secrets_example.dart lib/config/secrets.dart
+    - flutter pub get
+    - python3 translations/tools/check.py
+    - python3 translations/tools/gen_assets.py --check
+    - python3 tool/check_l10n_strings.py
+    - python3 tool/gen_registration_anchors.py --check
+    - python3 tool/optimize_app_artwork.py --check
+    - dart format --output=none --set-exit-if-changed lib test integration_test test_driver
+    - flutter analyze
+    - flutter test --concurrency=4

@@ -31,6 +31,15 @@ enum VideoNoteExportError: Error, Sendable {
   private var notificationTapChannel: FlutterMethodChannel?
   private var communicationNotificationBridge: CommunicationNotificationBridge?
   private var pendingNotificationTap: [String: Any]?
+  private var sharedLinksChannel: FlutterMethodChannel?
+  /// Links from taps on the Open in Mithka notification, held until Dart
+  /// drains them together with SharedLinkQueue.
+  private var pendingSharedLinks: [String] = []
+  /// Open in Mithka links that came in as URLs (the share action's direct
+  /// open), with when. A late direct open can follow its own fallback, so
+  /// drain skips queued copies of these.
+  private var recentOpenedSharedLinks: [(link: String, at: Date)] = []
+  private static let openedSharedLinkWindow: TimeInterval = 5
   private var apnsDeviceToken: String?
   private var didRegisterFlutterPlugins = false
   private var liveCommunicationBridge: AnyObject?
@@ -193,7 +202,7 @@ enum VideoNoteExportError: Error, Sendable {
   }
 
   private static func sentryReleaseName(info: [String: Any]) -> String {
-    let bundleId = info["CFBundleIdentifier"] as? String ?? "ad.neko.mithka"
+    let bundleId = info["CFBundleIdentifier"] as? String ?? "x.empty.mithka"
     let version = info["CFBundleShortVersionString"] as? String ?? "0"
     let build = info["CFBundleVersion"] as? String ?? "0"
     return "\(bundleId)@\(version)+\(build)"
@@ -225,6 +234,12 @@ enum VideoNoteExportError: Error, Sendable {
     case "pixel_gradient": return "MithkaPixelGradient"
     case "letter_m_neutral": return "MithkaLetterMNeutral"
     case "letter_m_gradient": return "MithkaLetterMGradient"
+    case "mithkax_default": return "MithkaDefault"
+    case "mithkax_green": return "MithkaGreen"
+    case "mithkax_flame": return "MithkaFlame"
+    case "mithkax_default_night": return "MithkaDefaultNight"
+    case "mithkax_green_night": return "MithkaGreenNight"
+    case "mithkax_flame_night": return "MithkaFlameNight"
     case "skateboard": return "MithkaSkateboard"
     case "surfboard": return "MithkaSurfboard"
     case "basketball": return "MithkaBasketball"
@@ -291,6 +306,12 @@ enum VideoNoteExportError: Error, Sendable {
     case "MithkaPixelGradient": return "pixel_gradient"
     case "MithkaLetterMNeutral": return "letter_m_neutral"
     case "MithkaLetterMGradient": return "letter_m_gradient"
+    case "MithkaDefault": return "mithkax_default"
+    case "MithkaGreen": return "mithkax_green"
+    case "MithkaFlame": return "mithkax_flame"
+    case "MithkaDefaultNight": return "mithkax_default_night"
+    case "MithkaGreenNight": return "mithkax_green_night"
+    case "MithkaFlameNight": return "mithkax_flame_night"
     case "MithkaSkateboard": return "skateboard"
     case "MithkaSurfboard": return "surfboard"
     case "MithkaBasketball": return "basketball"
@@ -679,45 +700,11 @@ enum VideoNoteExportError: Error, Sendable {
           result(FlutterError(code: "invalid_icon", message: "Unknown app icon", details: nil))
           return
         }
-        let freeIconNames: Set<String> = [
-          "default", "white", "blue", "purple", "pixel", "aurora", "prism", "signal",
-          "pixel_neutral", "pixel_gradient", "letter_m_neutral", "letter_m_gradient",
-        ]
-        // The 48 penguins in their fixed catalogue order (01-pilot …
-        // 48-stargazing). Must match AppIconVariant.dailyPenguinOrder in
-        // lib/settings/app_icon_controller.dart and paidIcons in
-        // MainActivity.kt; never sort it.
-        let dailyPenguinOrder: [String] = [
-          "pilot", "headphones", "winter", "astronaut", "crown", "party",
-          "sleepy", "heart", "coffee", "detective", "gamer", "fishing",
-          "skateboard", "surfboard", "basketball", "football", "tennis", "skiing",
-          "painter", "guitar", "drummer", "photographer", "magician", "chef",
-          "reader", "scientist", "gardener", "mail-carrier", "pirate", "dragon",
-          "bubblegum", "raincoat", "noodles", "ice-cream", "sunflower", "ninja",
-          "high-five", "hug", "seesaw", "dance", "pillow-fight", "snowball",
-          "parade", "choir", "stack", "picnic", "paper-planes", "stargazing",
-        ]
+        // nativeIconName is the single source of truth for "an icon that
+        // exists"; "default" hands the system back its own primary icon.
+        // MithkaX ships every icon free, so membership is the whole check —
+        // there is no daily rotation and no entitlement to consult.
         Task { @MainActor in
-          // Today's penguin is free without a subscription. Compute the UTC
-          // day here at apply time, never trusting Dart:
-          // floor(unixSeconds / 86400) mod 48.
-          let utcDay = Int((Date().timeIntervalSince1970 / 86_400).rounded(.down))
-          let count = dailyPenguinOrder.count
-          let dailyPenguin = dailyPenguinOrder[((utcDay % count) + count) % count]
-          // Gate explicit paid selections only. Reading or retaining the
-          // currently installed icon never requires an active subscription.
-          if !freeIconNames.contains(requested) && requested != dailyPenguin {
-            guard await MithkaProBridge.hasActiveSupporterEntitlement() else {
-              result(
-                FlutterError(
-                  code: "supporter_required",
-                  message: "An active Mithka Pro subscription is required to select this icon",
-                  details: nil
-                )
-              )
-              return
-            }
-          }
           UIApplication.shared.setAlternateIconName(nativeName) { error in
             if let error {
               result(
@@ -868,6 +855,34 @@ enum VideoNoteExportError: Error, Sendable {
       let pending = self?.pendingNotificationTap
       self?.pendingNotificationTap = nil
       result(pending)
+    }
+    let sharedLinksChannel = FlutterMethodChannel(
+      name: "mithka/shared_links",
+      binaryMessenger: engineBridge.applicationRegistrar.messenger()
+    )
+    self.sharedLinksChannel = sharedLinksChannel
+    sharedLinksChannel.setMethodCallHandler { [weak self] call, result in
+      guard call.method == "drain" else {
+        result(FlutterMethodNotImplemented)
+        return
+      }
+      // Oldest first and tapped links last: Dart acts on the last one, so a
+      // tapped notification wins over anything merely waiting in the queue.
+      guard let self else {
+        result([String]())
+        return
+      }
+      let tapped = self.pendingSharedLinks
+      self.pendingSharedLinks = []
+      let queued = SharedLinkQueue.shared?.drainEntries() ?? (links: [], ids: [])
+      if !queued.ids.isEmpty {
+        // Their notifications would now open nothing.
+        let center = UNUserNotificationCenter.current()
+        center.removePendingNotificationRequests(withIdentifiers: queued.ids)
+        center.removeDeliveredNotifications(withIdentifiers: queued.ids)
+      }
+      let opened = self.recentlyOpenedSharedLinks()
+      result((queued.links + tapped).filter { !opened.contains($0) })
     }
     communicationNotificationBridge = CommunicationNotificationBridge(
       messenger: engineBridge.applicationRegistrar.messenger()
@@ -1374,6 +1389,11 @@ enum VideoNoteExportError: Error, Sendable {
     withCompletionHandler completionHandler: @escaping () -> Void
   ) {
     let userInfo = response.notification.request.content.userInfo
+    if let id = userInfo[SharedLinkQueue.UserInfoKey.id] as? String {
+      openSharedLink(id: id, userInfo: userInfo)
+      completionHandler()
+      return
+    }
     if Self.isFlutterLocalNotification(userInfo) {
       super.userNotificationCenter(
         center,
@@ -1387,6 +1407,38 @@ enum VideoNoteExportError: Error, Sendable {
     pendingNotificationTap = payload
     notificationTapChannel?.invokeMethod("notificationTap", arguments: payload)
     completionHandler()
+  }
+
+  /// A tap on the notification the OpenInMithka extension posts. A queued
+  /// link is claimed from SharedLinkQueue, so it opens once even if Mithka
+  /// already drained it on becoming active; a link the extension could not
+  /// queue travels in userInfo instead.
+  private func openSharedLink(id: String, userInfo: [AnyHashable: Any]) {
+    let link: String?
+    if userInfo[SharedLinkQueue.UserInfoKey.queued] as? Bool == true {
+      link = SharedLinkQueue.shared?.claim(id: id)
+    } else {
+      link = (userInfo[SharedLinkQueue.UserInfoKey.link] as? String)
+        .flatMap { TelegramShareLink.isMithkaOpenLink($0) ? $0 : nil }
+    }
+    guard let link else { return }
+    pendingSharedLinks.append(link)
+    sharedLinksChannel?.invokeMethod("linksAvailable", arguments: nil)
+  }
+
+  /// Notes an incoming URL so drain can drop a queued copy of it.
+  func noteOpenedURL(_ url: URL) {
+    let link = url.absoluteString
+    guard TelegramShareLink.isMithkaOpenLink(link) else { return }
+    recentOpenedSharedLinks.append((link, Date()))
+  }
+
+  private func recentlyOpenedSharedLinks() -> Set<String> {
+    let now = Date()
+    recentOpenedSharedLinks.removeAll {
+      now.timeIntervalSince($0.at) > Self.openedSharedLinkWindow
+    }
+    return Set(recentOpenedSharedLinks.map(\.link))
   }
 
   private static func isFlutterLocalNotification(_ userInfo: [AnyHashable: Any]) -> Bool {
@@ -1494,7 +1546,7 @@ private enum StickerAlphaMovError: LocalizedError {
 /// a matching background.
 private enum StickerAlphaMovTranscoder {
   private static let queue = DispatchQueue(
-    label: "ad.neko.mithka.sticker-export",
+    label: "x.empty.mithka.sticker-export",
     qos: .userInitiated
   )
   private static let defaultFrameDuration = 1.0 / 30.0
@@ -1720,7 +1772,7 @@ private struct AnimatedAvatarCropRegion: Sendable {
 
 private enum AnimatedAvatarTranscoder {
   private static let queue = DispatchQueue(
-    label: "ad.neko.mithka.animated-avatar",
+    label: "x.empty.mithka.animated-avatar",
     qos: .userInitiated
   )
   private static let maximumDuration = 10.0
@@ -2290,7 +2342,7 @@ private final class AccountSessionBackupKeychain {
   private let localService: String
 
   init() {
-    let bundleId = Bundle.main.bundleIdentifier ?? "ad.neko.mithka"
+    let bundleId = Bundle.main.bundleIdentifier ?? "x.empty.mithka"
     self.syncedService = "\(bundleId).sessionsbackup"
     self.localService = "\(bundleId).sessionsbackup.local"
   }

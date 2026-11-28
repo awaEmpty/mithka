@@ -57,6 +57,10 @@ app.*.map.json
 # or generate from .env via scripts/gen-secrets.sh
 lib/config/secrets.dart
 
+# A stray copy of lib/config/secrets.dart was once saved here by mistake. The
+# real Firebase config lives at android/app/google-services.json.
+android/google-services.json
+
 # Raw local secrets consumed by scripts/gen-secrets.sh: Telegram api_id/api_hash
 # + base64 signing keystore & passwords. Never commit.
 .env
@@ -82,7 +86,9 @@ android/app/src/main/jniLibs/
 .tdlib-build/
 /native-libs/
 
-# One-time working notes (not part of the app)
+# One-time working notes and local agent directories (not part of the app)
+/.claude/
+/.kilo/
 /CLAUDE.md
 /SESSION.md
 /TODO.md

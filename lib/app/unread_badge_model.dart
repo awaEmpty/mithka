@@ -1,8 +1,6 @@
 import 'dart:async';
 import 'dart:math' as math;
-
 import 'package:flutter/foundation.dart';
-
 import '../tdlib/json_helpers.dart';
 import '../tdlib/td_client.dart';
 import '../theme/theme_controller.dart';

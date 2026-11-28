@@ -1,5 +1,4 @@
 import 'package:flutter/widgets.dart';
-
 import 'app_theme.dart';
 
 /// Discrete content-size choices. Persisted custom sizes are not quantized.

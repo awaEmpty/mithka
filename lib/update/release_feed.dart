@@ -14,8 +14,8 @@ import 'dart:io';
 /// GitHub rejects requests without a User-Agent.
 const releaseFeedUserAgent = 'mithka-update-checker';
 
-const _owner = 'iebb';
-const _repo = 'mithka';
+const _owner = 'TiaraBasori';
+const _repo = 'MithkaX';
 
 /// Where a user is sent when an in-place update is not something this install
 /// can do for them.
@@ -78,18 +78,25 @@ String? desktopPackageSuffix([Abi? abi, bool? appImage]) =>
       _ => null,
     };
 
-/// The latest stable release, or null when the request fails or is malformed.
+/// The newest release, or null when the request fails or is malformed.
 ///
-/// Nightly builds are published as pre-releases, so `releases/latest` answers
-/// with the newest stable tag on every channel.
+/// The feed walks the release list and takes the first (newest) tag instead of
+/// `releases/latest`, which answers only the stable release and would hide a
+/// newer pre-release build. [includePrereleases] decides whether those
+/// pre-release entries are offered at all; it defaults to false, matching the
+/// About switch's default, so an install that never touched the setting only
+/// follows official releases.
 Future<ReleaseInfo?> fetchLatestRelease({
   String owner = _owner,
   String repo = _repo,
+  bool includePrereleases = false,
 }) async {
   final client = HttpClient()..connectionTimeout = const Duration(seconds: 8);
   try {
     final request = await client.getUrl(
-      Uri.parse('https://api.github.com/repos/$owner/$repo/releases/latest'),
+      Uri.parse(
+        'https://api.github.com/repos/$owner/$repo/releases?per_page=10',
+      ),
     );
     request.headers.set(HttpHeaders.userAgentHeader, releaseFeedUserAgent);
     request.headers.set(
@@ -99,18 +106,43 @@ Future<ReleaseInfo?> fetchLatestRelease({
     final response = await request.close().timeout(const Duration(seconds: 10));
     if (response.statusCode != 200) return null;
     final body = await response.transform(utf8.decoder).join();
-    return parseReleaseInfo(body);
+    return parseReleaseList(body, includePrereleases: includePrereleases);
   } finally {
     client.close(force: true);
   }
 }
 
-/// Reads one `releases/latest` document, or null when the tag is missing.
+/// Reads the release list and returns the first (newest) allowed entry, or
+/// null when the list is empty or malformed.
+///
+/// A draft never counts (it is not published), and a pre-release only counts
+/// when [includePrereleases] says the user opted into those builds.
+ReleaseInfo? parseReleaseList(String body, {bool includePrereleases = false}) {
+  final json = jsonDecode(body);
+  if (json is! List || json.isEmpty) return null;
+  ReleaseInfo? best;
+  for (final entry in json.whereType<Map>()) {
+    final tag = entry['tag_name'] as String?;
+    if (tag == null) continue;
+    if (entry['draft'] == true) continue;
+    if (entry['prerelease'] == true && !includePrereleases) continue;
+    final info = _parseOneRelease(entry, tag);
+    if (info == null) continue;
+    best ??= info;
+  }
+  return best;
+}
+
+/// Reads one release document, or null when the tag is missing.
 ReleaseInfo? parseReleaseInfo(String body) {
   final json = jsonDecode(body);
   if (json is! Map<String, dynamic>) return null;
   final tag = json['tag_name'] as String?;
   if (tag == null) return null;
+  return _parseOneRelease(json, tag);
+}
+
+ReleaseInfo? _parseOneRelease(Map json, String tag) {
   final assets = ((json['assets'] as List?) ?? const [])
       .whereType<Map>()
       .map(

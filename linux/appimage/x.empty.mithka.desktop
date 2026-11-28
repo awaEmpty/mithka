@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Mithka X
+Comment=Telegram client
+Exec=mithka %U
+Icon=x.empty.mithka
+Terminal=false
+Categories=Network;InstantMessaging;
+StartupWMClass=x.empty.mithka

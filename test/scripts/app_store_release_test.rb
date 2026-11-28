@@ -17,8 +17,7 @@ class AppStoreReleaseTest < Minitest::Test
   SUBMISSION_ID = "51460acf-3238-49cc-bf75-1f4687bb73cd"
   UPLOADED_BUILD_ID = "28ad1b06-7884-4482-ae22-5c1b315e97c9"
   GITHUB_RUN_ID = "31586409622"
-  DESCRIPTION = "Description\nTerms of Use: #{MithkaAppStoreRelease::TERMS_OF_USE_URL}\n" \
-                "EULA: #{MithkaAppStoreRelease::APPLE_EULA_URL}"
+  DESCRIPTION = "Description\nTerms of Use: #{MithkaAppStoreRelease::TERMS_OF_USE_URL}"
   # Mithka Pro as Apple reports it inside an open iOS review submission.
   PLAN_ITEMS = [
     ["group-item", "subscriptionGroupVersion", "group-version"],
@@ -30,10 +29,10 @@ class AppStoreReleaseTest < Minitest::Test
       "included" => [{ "type" => "subscriptionGroups", "attributes" => { "referenceName" => "Mithka Pro" } }]
     },
     ["/subscriptionVersions/monthly-version", { "include" => "subscription" }] => {
-      "included" => [{ "type" => "subscriptions", "attributes" => { "productId" => "ad.neko.mithka.pro.monthly" } }]
+      "included" => [{ "type" => "subscriptions", "attributes" => { "productId" => "x.empty.mithka.pro.monthly" } }]
     },
     ["/subscriptionVersions/yearly-version", { "include" => "subscription" }] => {
-      "included" => [{ "type" => "subscriptions", "attributes" => { "productId" => "ad.neko.mithka.pro.yearly" } }]
+      "included" => [{ "type" => "subscriptions", "attributes" => { "productId" => "x.empty.mithka.pro.yearly" } }]
     }
   }.freeze
 
@@ -238,13 +237,20 @@ class AppStoreReleaseTest < Minitest::Test
     end
     build_runner(client, StringIO.new, apply: true).send(:sync_version_metadata, TARGET_VERSION_ID, MithkaAppStoreRelease::DEFAULT_RELEASE_NOTES)
     descriptions = client.writes.to_h { |_, path, body| [path, body.dig("data", "attributes", "description")] }
-    assert_equal "介绍\n\n使用条款：#{MithkaAppStoreRelease::TERMS_OF_USE_URL}\n" \
-                 "Apple 标准最终用户许可协议：#{MithkaAppStoreRelease::APPLE_EULA_URL}",
+    assert_equal "介绍\n\n使用条款：#{MithkaAppStoreRelease::TERMS_OF_USE_URL}",
                  descriptions.fetch("/appStoreVersionLocalizations/zh-Hans")
-    assert_equal "About\n\nTerms of Use: #{MithkaAppStoreRelease::TERMS_OF_USE_URL}\n" \
-                 "Apple Standard EULA: #{MithkaAppStoreRelease::APPLE_EULA_URL}",
-                 descriptions.fetch("/appStoreVersionLocalizations/canada")
+    assert_nil descriptions["/appStoreVersionLocalizations/canada"]
     refute descriptions.key?("/appStoreVersionLocalizations/en-US")
+  end
+
+  def test_descriptions_drop_the_apple_eula_line
+    eula = "Apple Standard EULA: #{MithkaAppStoreRelease::APPLE_EULA_URL}"
+    assert_equal "About\n\nTerms of Use: #{MithkaAppStoreRelease::TERMS_OF_USE_URL}",
+                 MithkaAppStoreRelease.description_with_terms(
+                   "en-US", "About\n\nTerms of Use: #{MithkaAppStoreRelease::TERMS_OF_USE_URL}\n#{eula}\n"
+                 )
+    assert_equal "介绍\n\n使用条款：#{MithkaAppStoreRelease::TERMS_OF_USE_URL}",
+                 MithkaAppStoreRelease.description_with_terms("zh-Hans", "介绍\n\n#{eula}")
   end
 
   def draft_routes(states: ["PREPARE_FOR_SUBMISSION"], version: "0.7.40")
@@ -882,7 +888,7 @@ class AppStoreReleaseTest < Minitest::Test
     )
   end
 
-  def with_artifact(bundle_id: "ad.neko.mithka", short_version: "0.7.41", build_number: "346")
+  def with_artifact(bundle_id: "x.empty.mithka", short_version: "0.7.41", build_number: "346")
     Dir.mktmpdir("mithka-release") do |directory|
       app_directory = File.join(directory, "Payload", "Runner.app")
       FileUtils.mkdir_p(app_directory)
@@ -920,7 +926,7 @@ class AppStoreReleaseTest < Minitest::Test
         }
       },
       "/builds/#{UPLOADED_BUILD_ID}/app" => {
-        "data" => { "type" => "apps", "id" => APP_ID, "attributes" => { "bundleId" => "ad.neko.mithka" } }
+        "data" => { "type" => "apps", "id" => APP_ID, "attributes" => { "bundleId" => "x.empty.mithka" } }
       },
       "/builds/#{UPLOADED_BUILD_ID}/preReleaseVersion" => {
         "data" => {

@@ -8,7 +8,6 @@
 
 import 'package:mithka/l10n/app_localizations.dart';
 import 'package:mithka/l10n/gram_amount.dart';
-
 import 'td_models.dart';
 
 /// The TDLib message content a [MessageGift] was parsed from.

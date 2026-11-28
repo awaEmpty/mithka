@@ -6,10 +6,8 @@
 //
 
 import 'dart:async';
-
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-
 import '../app/app_navigator.dart';
 import '../chat/chat_view.dart';
 import '../chats/chat_row_view.dart';

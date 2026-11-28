@@ -21,21 +21,20 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:isolate';
-
 import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-
 import '../app/diagnostic_breadcrumbs.dart';
 import '../bot_api/bot_api_account.dart';
 import '../bot_api/bot_api_client.dart';
 import '../bot_api/bot_api_endpoint_config.dart';
 import '../bot_api/bot_api_td_backend.dart';
 import '../config/secrets.dart';
-import '../settings/api_credentials_config.dart';
-import '../settings/download_storage.dart';
-import '../settings/proxy_config.dart';
-import '../settings/transfer_boost_config.dart';
+import '../platform/process_engine.dart';
+import '../settings/downloads_storage/download_storage.dart';
+import '../settings/network_proxy/api_credentials_config.dart';
+import '../settings/network_proxy/proxy_config.dart';
+import '../settings/network_proxy/transfer_boost_config.dart';
 import 'avatar_animation_index.dart';
 import 'forum_topic_index.dart';
 import 'gram_js_session.dart';
@@ -238,6 +237,18 @@ class TdClient {
   static const defaultQueryTimeout = Duration(seconds: 30);
   WebProxyCarriers? _webProxyCarriers;
 
+  /// The version reported to Telegram in `setTdlibParameters` (Settings ›
+  /// Devices shows it). The bootstrap seeds it from the packaged version as
+  /// soon as the platform channel answers; until then the legacy "1.0"
+  /// placeholder keeps a launch that races the read reporting something.
+  static String? Function()? applicationVersionProvider;
+
+  String _applicationVersion() => applicationVersionProvider?.call() ?? '1.0';
+
+  /// Reads [applicationVersionProvider] the way `_sendParameters` does.
+  @visibleForTesting
+  String debugApplicationVersionForTesting() => _applicationVersion();
+
   /// A private instance for tests that exercise the real restore lifecycle
   /// against synthetic bindings instead of tdjson.
   @visibleForTesting
@@ -307,12 +318,30 @@ class TdClient {
 
   // Receive isolate management — stored as fields so we can restart on resume.
   ReceivePort? _receivePort;
-  StreamSubscription<dynamic>? _receiveSub;
   Isolate? _receiveIsolate;
   Future<void>? _receiveIsolateExited;
   final Set<Future<void>> _receiveIsolateExitFutures = {};
   int _receiveIsolateGeneration = 0;
   bool _receiveIsolateDead = false;
+
+  /// Port the receive isolate listens on for a cooperative shutdown request.
+  SendPort? _receiveControl;
+
+  /// Cancels the parent-side subscription of [_receivePort].
+  StreamSubscription<dynamic>? _receiveSubCancel;
+
+  /// Serialises [spawn]/[retire] so two callers cannot both spawn.
+  Future<void>? _receiveSpawnOperation;
+
+  /// Set when a stop was requested before the isolate announced its control
+  /// port, so the request is replayed instead of being lost.
+  bool _receiveStopRequested = false;
+
+  /// Clients that already received setTdlibParameters. TDLib rejects a second
+  /// one with "Unexpected setTdlibParameters", and the startup path used to
+  /// send three to the same client because both the activation path and the
+  /// waitTdlibParameters push reach here.
+  final Set<int> _parametersSent = {};
 
   // Request/response correlation, keyed by the "@extra" we attach.
   final Map<String, _PendingRequest> _pending = {};
@@ -329,6 +358,11 @@ class TdClient {
   );
   final Map<int, Map<String, dynamic>> _latestChatFoldersByClient = {};
   final Map<int, Map<String, dynamic>> _latestEmojiChatThemesByClient = {};
+
+  /// Last `updateAccentColors` and `updateProfileAccentColors` per client.
+  /// TDLib pushes both once at login and asking again needs `getCurrentState`.
+  final Map<int, Map<String, dynamic>> _latestAccentColorsByClient = {};
+  final Map<int, Map<String, dynamic>> _latestProfileAccentColorsByClient = {};
 
   /// Last `updateConnectionState` per client. TDLib pushes that update only
   /// when the state actually changes and the pinned TDLib has no
@@ -364,6 +398,11 @@ class TdClient {
 
   static const _slotsKey = 'drachma.accountSlots';
   static const _activeKey = 'drachma.activeSlot';
+
+  /// Native client ids this Dart VM created, persisted so the NEXT engine in
+  /// the same process can close them. The key string predates release builds
+  /// writing it (it was a hot-restart aid) and is kept so debug installs'
+  /// leftovers are reclaimed too.
   static const _liveClientIdsKey = 'drachma.debugLiveClientIds';
 
   int get activeSlot => _activeSlot;
@@ -437,6 +476,10 @@ class TdClient {
       _latestEmojiChatThemesByClient[_activeClientId];
   Map<String, dynamic>? latestEmojiChatThemesUpdateForClient(int clientId) =>
       _latestEmojiChatThemesByClient[clientId];
+  Map<String, dynamic>? get latestAccentColorsUpdate =>
+      _latestAccentColorsByClient[_activeClientId];
+  Map<String, dynamic>? get latestProfileAccentColorsUpdate =>
+      _latestProfileAccentColorsByClient[_activeClientId];
   Map<String, dynamic>? get latestConnectionStateUpdate =>
       _latestConnectionStateByClient[_activeClientId];
   Map<String, dynamic>? latestConnectionStateUpdateForClient(int clientId) =>
@@ -490,6 +533,12 @@ class TdClient {
     }
     if (object.type == 'updateEmojiChatThemes') {
       _latestEmojiChatThemesByClient[_activeClientId] = object;
+    }
+    if (object.type == 'updateAccentColors') {
+      _latestAccentColorsByClient[_activeClientId] = object;
+    }
+    if (object.type == 'updateProfileAccentColors') {
+      _latestProfileAccentColorsByClient[_activeClientId] = object;
     }
     if (object.type == 'updateConnectionState') {
       _latestConnectionStateByClient[_activeClientId] = object;
@@ -579,7 +628,35 @@ class TdClient {
         availableRoots: await DownloadStorage.locations(),
       );
     }
-    if (kDebugMode) await _closeStaleDebugClients();
+    // Start receiving before anything that can need an acknowledgement: the
+    // stale-engine reclaim below waits for authorizationStateClosed, and a
+    // Quit landing in this window must still see every native close.
+    if (kDebugMode) {
+      _startDebugReceivePump();
+    } else {
+      // The spawn retires the previous isolate first and may wait for it to
+      // leave td_receive, so the reclaim below must not run beside it.
+      await _spawnReceiveIsolate();
+    }
+
+    // Android can attach a SECOND FlutterEngine to a process whose previous
+    // engine is gone: finishing the last activity (Back, or the exit after an
+    // icon switch) leaves the process cached, and the next launch re-enters it.
+    // The previous engine's TDLib clients are still alive inside libtdjson —
+    // a Dart VM death never closes them — and each one holds its account's
+    // binlog write lock, so the new client can never leave
+    // authorizationStateWaitTdlibParameters: the app dies on the loading page
+    // and the next launch (fresh process) looks fine. Close them first; debug
+    // builds have always done this after a hot restart.
+    //
+    // Only when the host proves the owning Activity is gone: a configuration
+    // change creates this engine before the previous Activity's onDestroy
+    // returns, and closing a live session's clients would kill a VM still
+    // using them.
+    final engineState = await processEngineState();
+    if (kDebugMode || engineState.mayReclaimPreviousEngine) {
+      await _reclaimStaleEngineClients();
+    }
 
     final storedBotApiAccounts = BotApiAccountRegistry.load(_prefs);
     _botApiEndpoint = BotApiEndpointConfig.load(
@@ -678,16 +755,7 @@ class TdClient {
       }
     }
     _activeClientId = _clientForSlot[active] ?? 0;
-    if (kDebugMode) unawaited(_persistDebugLiveClientIds());
-
-    // Start receiving before the first asynchronous backend startup. If Quit
-    // lands in that window, shutdown must still receive every native
-    // authorizationStateClosed acknowledgement before AppKit exits.
-    if (kDebugMode) {
-      _startDebugReceivePump();
-    } else {
-      _spawnReceiveIsolate();
-    }
+    unawaited(_persistLiveClientIds());
 
     // The first request "activates" each client; TDLib then emits its
     // updateAuthorizationState(authorizationStateWaitTdlibParameters).
@@ -701,12 +769,70 @@ class TdClient {
     }
   }
 
-  void _spawnReceiveIsolate() {
+  /// Retires the current receive isolate without ever letting two threads call
+  /// `td_receive` at the same time.
+  ///
+  /// TDLib treats `td_receive` as single-threaded for the whole process
+  /// (`TdReceiver::receive` in Client.cpp does `LOG(FATAL)` when its lock is
+  /// already held). The isolate spends most of its life BLOCKED inside that
+  /// call for up to a second, and `Isolate.kill(immediate)` cannot unwind a
+  /// native frame — so killing it and spawning a replacement straight away
+  /// starts a second receiver while the first is still inside TDLib, and the
+  /// process aborts. Ask it to stop and wait for it to leave the loop instead.
+  Future<bool> _retireReceiveIsolate() async {
+    final control = _receiveControl;
+    final exited = _receiveIsolateExited;
+    _receiveControl = null;
+    final port = _receivePort;
+    _receivePort = null;
+    await _receiveSubCancel?.cancel();
+    _receiveSubCancel = null;
+    control?.send(_tdReceiveStopCommand);
+    // Unsubscribe only after the stop request is out: the port is what carries
+    // the isolate's last events.
+    port?.close();
+    if (exited == null) {
+      _receiveIsolate = null;
+      return true;
+    }
+    try {
+      await exited.timeout(const Duration(milliseconds: 2500));
+      _receiveIsolate = null;
+      return true;
+    } on TimeoutException {
+      // It is wedged in the native call. Killing it cannot unwind that frame,
+      // but nothing else will make progress, and starting a replacement on top
+      // of a live receiver aborts the process, so take the safer failure: no
+      // pump rather than a double one.
+      debugPrint('🔑 [Mithka] receive isolate ignored the stop request');
+      _receiveIsolate?.kill(priority: Isolate.immediate);
+      _receiveIsolate = null;
+      return false;
+    }
+  }
+
+  Future<void> _spawnReceiveIsolate() {
+    // Serialise: two overlapping calls would each retire and then spawn, and
+    // the second spawn would run beside the first replacement.
+    final existing = _receiveSpawnOperation;
+    if (existing != null) return existing;
+    late final Future<void> operation;
+    operation = _spawnReceiveIsolateLocked().whenComplete(() {
+      if (identical(_receiveSpawnOperation, operation)) {
+        _receiveSpawnOperation = null;
+      }
+    });
+    _receiveSpawnOperation = operation;
+    return operation;
+  }
+
+  Future<void> _spawnReceiveIsolateLocked() async {
     final generation = ++_receiveIsolateGeneration;
-    _receiveIsolate?.kill(priority: Isolate.immediate);
-    _receiveIsolate = null;
-    _receivePort?.close();
-    unawaited(_receiveSub?.cancel());
+    // Only one thread may ever sit in td_receive for this PROCESS: TDLib aborts
+    // on a second one (Client.cpp TdReceiver::receive). The retire waits for the
+    // previous isolate to leave its loop before a replacement spawns.
+    await _retireReceiveIsolate();
+    if (generation != _receiveIsolateGeneration) return;
 
     final port = ReceivePort();
     final exitPort = ReceivePort();
@@ -756,7 +882,18 @@ class TdClient {
             exitPort.close();
           }),
     );
-    _receiveSub = port.listen((message) {
+    _receiveSubCancel = port.listen((message) {
+      // The isolate announces the port it listens on for cooperative shutdown.
+      if (message is Map<String, dynamic> &&
+          message['@type'] == _tdReceiveReadyType) {
+        final control = message['control'];
+        if (control is SendPort) {
+          _receiveControl = control;
+          // A stop requested between spawn and readiness must not be lost.
+          if (_receiveStopRequested) control.send(_tdReceiveStopCommand);
+        }
+        return;
+      }
       // The isolate batches events into one list; the terminal fatal notice is
       // still sent on its own so it can't sit behind a partial batch.
       if (message is List) {
@@ -875,6 +1012,9 @@ class TdClient {
       if (!waiter.isCompleted) waiter.complete();
     }
     _clientClosedWaiters.clear();
+    // Nothing is left to reclaim, so a later engine in this process must not
+    // try to close these ids again.
+    await _prefs.remove(_liveClientIdsKey);
     _clientForSlot.clear();
     _slotForClient.clear();
     _botApiBackendForClient.clear();
@@ -916,28 +1056,12 @@ class TdClient {
     _debugReceiveTimer?.cancel();
     _debugReceiveTimer = null;
 
-    final receiveSubscription = _receiveSub;
-    _receiveSub = null;
-    await receiveSubscription?.cancel();
-    _receivePort?.close();
-    _receivePort = null;
-
-    final exits = Set<Future<void>>.of(_receiveIsolateExitFutures);
-    final isolate = _receiveIsolate;
-    ++_receiveIsolateGeneration;
-    isolate?.kill(priority: Isolate.immediate);
-    if (exits.isEmpty) {
-      _receiveIsolate = null;
-      return true;
-    }
-    try {
-      await Future.wait(exits).timeout(const Duration(seconds: 3));
-      _receiveIsolate = null;
-      _receiveIsolateExited = null;
-      return true;
-    } on TimeoutException {
-      return false;
-    }
+    _receiveStopRequested = true;
+    final stopped = await _retireReceiveIsolate();
+    _receiveStopRequested = false;
+    if (!stopped) return false;
+    _receiveIsolateExited = null;
+    return true;
   }
 
   // MARK: - Account management
@@ -958,7 +1082,7 @@ class TdClient {
     _clientForSlot[newSlot] = cid;
     _slotForClient[cid] = newSlot;
     _persist();
-    if (kDebugMode) unawaited(_persistDebugLiveClientIds());
+    unawaited(_persistLiveClientIds());
     _bindings.send(cid, _tdActivateRequest);
     return newSlot;
   }
@@ -1207,6 +1331,8 @@ class TdClient {
     _slotForClient.remove(oldClientId);
     _latestChatFoldersByClient.remove(oldClientId);
     _latestEmojiChatThemesByClient.remove(oldClientId);
+    _latestAccentColorsByClient.remove(oldClientId);
+    _latestProfileAccentColorsByClient.remove(oldClientId);
     _latestConnectionStateByClient.remove(oldClientId);
     _latestCommunitiesByClient.remove(oldClientId);
     _proxyAppliedClients.remove(oldClientId);
@@ -1219,7 +1345,7 @@ class TdClient {
     _activeSlot = slot;
     _activeClientId = newClientId;
     _persist();
-    if (kDebugMode) unawaited(_persistDebugLiveClientIds());
+    unawaited(_persistLiveClientIds());
 
     final waitForPhoneNumber = _updates.stream
         .where((update) => update.type == 'updateAuthorizationState')
@@ -1276,7 +1402,7 @@ class TdClient {
       final cid = _bindings.createClientId();
       _clientForSlot[newSlot] = cid;
       _slotForClient[cid] = newSlot;
-      if (kDebugMode) unawaited(_persistDebugLiveClientIds());
+      unawaited(_persistLiveClientIds());
       _bindings.send(
         cid,
         jsonEncode({'@type': 'getOption', 'name': 'version'}),
@@ -1293,7 +1419,7 @@ class TdClient {
         // each read the other's freshly registered client as "the existing
         // account", discarding one returned slot's database; resolve the
         // duplicate atomically instead.
-        return _resolveUnknownAccountImport(
+        return await _resolveUnknownAccountImport(
           newSlot,
           cid,
           dbDir,
@@ -1333,12 +1459,37 @@ class TdClient {
         _persist();
         return existingSlot;
       }
+      await _restartResolvedImportClient(slot, restoredUserId);
       setActive(slot);
       _persist();
       return slot;
     } finally {
       done.complete();
     }
+  }
+
+  /// Reopens an imported slot whose account TDLib resolved after it started.
+  ///
+  /// With no valid `my_id` in the binlog, TDLib's `AuthManager` reports the
+  /// session ready only once `users.getUsers(inputUserSelf)` answers, and that
+  /// path skips the managers' post-login `init()`: `AttachMenuManager` started
+  /// signed out and stays uninitialized, so the first attachment menu state it
+  /// reports once signed in fails a TDLib CHECK that aborts the app. TDLib
+  /// stored the real `my_id` before reporting ready, so the reopened client
+  /// starts signed in, the way the next launch would.
+  Future<void> _restartResolvedImportClient(int slot, int userId) async {
+    if (!await _closeClientForSlot(slot)) {
+      throw TimeoutException(
+        'Timed out reopening restored account session for slot $slot',
+      );
+    }
+    _ensureAcceptingNewClients();
+    final cid = _bindings.createClientId();
+    _clientForSlot[slot] = cid;
+    _slotForClient[cid] = slot;
+    unawaited(_persistLiveClientIds());
+    _bindings.send(cid, _tdActivateRequest);
+    await _waitForRestoredSessionReady(slot, cid, userId);
   }
 
   /// Closes an imported slot and removes its database. The directory is removed
@@ -1348,7 +1499,7 @@ class TdClient {
     await _deleteDirectoryIfPresent(dbDir);
     await Future<void>.delayed(const Duration(milliseconds: 300));
     await _deleteDirectoryIfPresent(dbDir);
-    if (kDebugMode) unawaited(_persistDebugLiveClientIds());
+    unawaited(_persistLiveClientIds());
   }
 
   /// Tears down a session slot whose setup failed with [error], then rethrows
@@ -1386,7 +1537,7 @@ class TdClient {
       final cid = _bindings.createClientId();
       _clientForSlot[newSlot] = cid;
       _slotForClient[cid] = newSlot;
-      if (kDebugMode) unawaited(_persistDebugLiveClientIds());
+      unawaited(_persistLiveClientIds());
       _bindings.send(
         cid,
         jsonEncode({'@type': 'getOption', 'name': 'version'}),
@@ -1772,7 +1923,7 @@ class TdClient {
     if (slot == _activeSlot || !_slots.contains(slot)) return;
     unawaited(_closeAndForgetSlot(slot));
     _persist();
-    if (kDebugMode) unawaited(_persistDebugLiveClientIds());
+    unawaited(_persistLiveClientIds());
   }
 
   /// Deletes the local TDLib data for a forgotten slot without contacting
@@ -1833,7 +1984,7 @@ class TdClient {
     if (_slots.contains(oldSlot)) {
       unawaited(_closeAndForgetSlot(oldSlot));
       _persist();
-      if (kDebugMode) unawaited(_persistDebugLiveClientIds());
+      unawaited(_persistLiveClientIds());
     }
     return newSlot;
   }
@@ -1910,6 +2061,8 @@ class TdClient {
       ForumTopicIndex.shared.clearSlot(slot);
       _latestChatFoldersByClient.remove(cid);
       _latestEmojiChatThemesByClient.remove(cid);
+      _latestAccentColorsByClient.remove(cid);
+      _latestProfileAccentColorsByClient.remove(cid);
       _latestConnectionStateByClient.remove(cid);
       _latestTextCompositionStylesByClient.remove(cid);
       _latestCommunitiesByClient.remove(cid);
@@ -1941,11 +2094,13 @@ class TdClient {
       ForumTopicIndex.shared.clearSlot(slot);
       _latestChatFoldersByClient.remove(cid);
       _latestEmojiChatThemesByClient.remove(cid);
+      _latestAccentColorsByClient.remove(cid);
+      _latestProfileAccentColorsByClient.remove(cid);
       _latestConnectionStateByClient.remove(cid);
       _latestTextCompositionStylesByClient.remove(cid);
       _latestCommunitiesByClient.remove(cid);
       _proxyAppliedClients.remove(cid);
-      if (kDebugMode) unawaited(_persistDebugLiveClientIds());
+      unawaited(_persistLiveClientIds());
     }
     if (didClose) _unconfirmedSlotForClient.remove(cid);
     return didClose;
@@ -2019,6 +2174,7 @@ class TdClient {
 
     if (object.type == 'updateAuthorizationState' &&
         object.obj('authorization_state')?.type == 'authorizationStateClosed') {
+      _parametersSent.remove(clientId);
       _webProxyCarriers?.closeClient(clientId);
       TdUserIndex.shared.clearSlot(slot);
       ForumTopicIndex.shared.clearSlot(slot);
@@ -2041,11 +2197,33 @@ class TdClient {
       _sendParameters(clientId);
     }
 
+    // setTdlibParameters is fire-and-forget, so a rejection arrives without our
+    // "@extra" and no handler would see it: drop the once-only guard so the
+    // next waitTdlibParameters pushes it again.
+    if (object.type == 'error' && extra == null) {
+      _parametersSent.remove(clientId);
+    }
+    // TDLib answers "Request aborted" (500) for a request queued against a
+    // client it no longer has: the client is gone, so a reclaim waiter for it
+    // must stop waiting even though no authorizationStateClosed will follow.
+    if (object.type == 'error' &&
+        object.integer('code') == 500 &&
+        (object.str('message') ?? '').startsWith('Request aborted')) {
+      final waiter = _clientClosedWaiters.remove(clientId);
+      if (waiter != null && !waiter.isCompleted) waiter.complete();
+    }
+
     if (object.type == 'updateChatFolders') {
       _latestChatFoldersByClient[clientId] = object;
     }
     if (object.type == 'updateEmojiChatThemes') {
       _latestEmojiChatThemesByClient[clientId] = object;
+    }
+    if (object.type == 'updateAccentColors') {
+      _latestAccentColorsByClient[clientId] = object;
+    }
+    if (object.type == 'updateProfileAccentColors') {
+      _latestProfileAccentColorsByClient[clientId] = object;
     }
     if (object.type == 'updateConnectionState') {
       _latestConnectionStateByClient[clientId] = object;
@@ -2098,28 +2276,55 @@ class TdClient {
     });
   }
 
-  Future<void> _closeStaleDebugClients() async {
+  /// Closes the native TDLib clients a PREVIOUS FlutterEngine left behind in
+  /// this process, and waits until they confirm the close.
+  ///
+  /// A Dart VM death destroys nothing inside libtdjson: the clients keep their
+  /// threads, their SQLite handles and the write lock on each account's binlog.
+  /// A replacement client opening the same directory can then never finish
+  /// `setTdlibParameters` — the launch sits on the loading page until it dies.
+  /// `authorizationStateClosed` is the only acknowledgement that the native
+  /// client released the directory, so the replacements wait for it.
+  Future<void> _reclaimStaleEngineClients() async {
     final ids = _prefs
         .getStringList(_liveClientIdsKey)
         ?.map(int.tryParse)
         .whereType<int>()
+        .where((id) => id > 0)
         .toList();
-    if (ids == null || ids.isEmpty) return;
-    final closedIds = closeStaleDebugTdlibClients(ids, _bindings.send);
-    if (closedIds.isNotEmpty) {
+    if (ids == null || ids.isEmpty) {
+      return;
+    }
+    final waiters = <Future<void>>[
+      for (final id in ids)
+        (_clientClosedWaiters[id] ??= Completer<void>()).future,
+    ];
+    for (final id in ids) {
+      _bindings.send(id, _tdCloseRequest);
+    }
+    debugPrint(
+      '🔑 [Mithka] closing TDLib clients left by the previous engine: '
+      '${ids.join(', ')}',
+    );
+    try {
+      // Every id answers one way or the other: authorizationStateClosed when a
+      // live previous engine finishes closing, or "Request aborted" when TDLib
+      // has never heard of it (cold process, or that engine already closed it).
+      // Swallowing the second answer is what let a replacement open a binlog in
+      // the middle of a slow close, so both complete the same waiter.
+      await Future.wait<void>(waiters).timeout(const Duration(seconds: 8));
+    } on TimeoutException {
       debugPrint(
-        '🔑 [Mithka] closing stale TDLib clients after hot restart: '
-        '${closedIds.join(', ')}',
+        '🔑 [Mithka] stale TDLib clients did not confirm close in time',
       );
-      // `close` is asynchronous inside TDLib. Give the native clients time to
-      // release their database handles before creating replacements that use
-      // the same account directories.
-      await Future<void>.delayed(const Duration(milliseconds: 200));
+    }
+    for (final id in ids) {
+      _clientClosedWaiters.remove(id);
     }
     await _prefs.remove(_liveClientIdsKey);
   }
 
-  Future<void> _persistDebugLiveClientIds() {
+  Future<void> _persistLiveClientIds() {
     return _prefs.setStringList(
       _liveClientIdsKey,
       _clientForSlot.values
@@ -2134,6 +2339,9 @@ class TdClient {
     if (_botApiBackendForClient.containsKey(clientId)) return;
     final slot = _slotForClient[clientId];
     if (slot == null) return;
+    // Exactly once per client: TDLib treats a repeat as an error, and every
+    // repeat used to surface as an unhandled "Unexpected setTdlibParameters".
+    if (!_parametersSent.add(clientId)) return;
 
     final dbDir = _databaseDirectory(slot);
     final filesDir = Platform.isAndroid && DownloadStorage.currentRoot != null
@@ -2160,7 +2368,9 @@ class TdClient {
           Platform.isIOS ? 'iPhone' : 'Android',
         ),
         'system_version': api.resolvedSystemVersion(_safeSystemVersion()),
-        'application_version': api.resolvedApplicationVersion('1.0'),
+        'application_version': api.resolvedApplicationVersion(
+          _applicationVersion(),
+        ),
       }),
     );
     // Ask Telegram's transport for an early server acknowledgement. TDLib
@@ -2309,6 +2519,38 @@ class TdClient {
   }
 
   // MARK: - Sending
+
+  /// The active client's last connection state as TDLib reported it
+  /// (`connectionStateReady`, `connectionStateConnecting`, …), or null before
+  /// the first update lands.
+  String? get activeConnectionState =>
+      _latestConnectionStateByClient[_activeClientId]?.obj('state')?.type;
+
+  /// Makes TDLib drop every connection it holds and dial again.
+  ///
+  /// TDLib retries a failed socket on its own, but one orphaned by a network
+  /// change can sit in a long backoff, which reads as "the app never
+  /// reconnects after Wi-Fi or a VPN came back". `setNetworkType` is the
+  /// documented reset: `none` closes the current connections, and the real
+  /// type immediately after brings the client back online with fresh ones.
+  void refreshNetwork() {
+    if (_isShuttingDown || _shutdownComplete) return;
+    final clients = _clientForSlot.values.toSet();
+    for (final clientId in clients) {
+      final slot = _slotForClient[clientId];
+      // A Bot API account talks HTTPS per request and has no TDLib connection
+      // to reset.
+      if (slot == null || isBotApiSlot(slot)) continue;
+      sendTo({
+        '@type': 'setNetworkType',
+        'type': const {'@type': 'networkTypeNone'},
+      }, clientId);
+      sendTo({
+        '@type': 'setNetworkType',
+        'type': const {'@type': 'networkTypeOther'},
+      }, clientId);
+    }
+  }
 
   /// Fire-and-forget request to the active account.
   void send(Map<String, dynamic> request) {
@@ -2680,6 +2922,17 @@ void _receiveEntry(SendPort toMain) {
     return;
   }
 
+  // A port the owner can use to ask for a cooperative shutdown. Killing an
+  // isolate that is blocked inside td_receive cannot unwind the native frame,
+  // and a second receiver entering TDLib alongside it aborts the whole process,
+  // so the loop is left through this flag instead.
+  final commands = ReceivePort();
+  var stopRequested = false;
+  commands.listen((message) {
+    if (message == _tdReceiveStopCommand) stopRequested = true;
+  });
+  toMain.send({'@type': _tdReceiveReadyType, 'control': commands.sendPort});
+
   // One port message per event costs the main isolate one event-loop turn each,
   // and a login sync emits thousands back to back. Batching removes that fixed
   // overhead. The batch is deliberately SMALL: a large one only converts cost
@@ -2699,7 +2952,7 @@ void _receiveEntry(SendPort toMain) {
       ..reset();
   }
 
-  while (true) {
+  while (!stopRequested) {
     Object? event;
     try {
       // Only block when nothing is buffered — a partial batch must not wait a
@@ -2708,6 +2961,7 @@ void _receiveEntry(SendPort toMain) {
     } catch (e) {
       flush();
       toMain.send({'@type': '_tdReceiveFatal', 'error': e.toString()});
+      commands.close();
       return;
     }
     if (event == null) {
@@ -2726,4 +2980,9 @@ void _receiveEntry(SendPort toMain) {
       flush();
     }
   }
+  flush();
+  commands.close();
 }
+
+const String _tdReceiveReadyType = '_tdReceiveReady';
+const String _tdReceiveStopCommand = 'stop';

@@ -1,9 +1,7 @@
 import 'dart:convert';
-
 import 'package:flutter/services.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-
 import '../tdlib/json_helpers.dart' show jsonInt;
 
 /// Non-secret metadata for one Telegram Bot API account.
@@ -149,7 +147,7 @@ String normalizeBotToken(String value) {
 abstract final class BotApiAccountRegistry {
   static const metadataKey = 'mithka.bot_api.accounts.v1';
   static const _tokenPrefix = 'mithka.bot_api.token.';
-  static const _appleKeychainService = 'ad.neko.mithka.bot-api';
+  static const _appleKeychainService = 'x.empty.mithka.bot-api';
   static const _secureStorage = FlutterSecureStorage(
     // The signed iOS and macOS targets use the same bundle identifier, so both
     // receive the same team-prefixed default Keychain access group. Leaving

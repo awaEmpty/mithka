@@ -1,6 +1,5 @@
 import 'dart:convert';
 import 'dart:typed_data';
-
 import 'package:archive/archive.dart';
 
 enum TelegramThemePlatform { android, ios, macos, desktop }

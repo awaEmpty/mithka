@@ -5,7 +5,6 @@
 //
 
 import 'dart:async';
-
 import 'package:flutter/widgets.dart';
 
 /// `mm:ss`, or `hh:mm:ss` from the first hour on, the way call timers and

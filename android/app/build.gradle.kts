@@ -14,7 +14,7 @@ val googleServicesFile = file("google-services.json")
 val hasFirebaseConfig = googleServicesFile.isFile && Regex(
     "\\\"mobilesdk_app_id\\\"\\s*:\\s*\\\"1:[0-9]+:android:[0-9a-fA-F]+\\\"",
 ).containsMatchIn(googleServicesFile.readText()) && Regex(
-    "\\\"package_name\\\"\\s*:\\s*\\\"ad\\.neko\\.mithka\\\"",
+    "\\\"package_name\\\"\\s*:\\s*\\\"x\\.empty\\.mithka\\\"",
 ).containsMatchIn(googleServicesFile.readText())
 if (hasFirebaseConfig) {
     apply(plugin = "com.google.gms.google-services")
@@ -35,7 +35,7 @@ val sentryDsn = providers.environmentVariable("SENTRY_DSN").orNull.orEmpty()
 val sentryEnvironment = providers.environmentVariable("SENTRY_ENVIRONMENT").orNull ?: "production"
 
 android {
-    namespace = "ad.neko.mithka"
+    namespace = "x.empty.mithka"
     compileSdk = flutter.compileSdkVersion
     ndkVersion = flutter.ndkVersion
 
@@ -46,7 +46,7 @@ android {
     }
 
     defaultConfig {
-        applicationId = "ad.neko.mithka"
+        applicationId = "x.empty.mithka"
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
         // The prebuilt TDLib (tdjson) artifacts target API 23. The manifest-aware
@@ -141,6 +141,18 @@ dependencies {
     // the real media transport behind the CallMediaEngine seam; CallMediaPlugin
     // drives its 1:1 P2P API from the TDLib callStateReady payload.
     implementation("io.github.pytgcalls:ntgcalls:2.2.5")
+    // UnifiedPush distributor connector. The app talks to whichever
+    // distributor (ntfy, etc.) is installed; no Google dependency.
+    // The connector pulls the JVM `tink` artifact while flutter_secure_storage
+    // already brings `tink-android`; both ship the same classes, so dexing
+    // fails on duplicates. Keep one artifact — the Android build — and pin it
+    // to the connector's release so its API expectations still hold. 3.3.4
+    // shipped aar-metadata demanding compileSdk 37 (a packaging slip fixed in
+    // 3.3.5+); stay on the newest 3.3.x whose API is byte-identical.
+    implementation("org.unifiedpush.android:connector:3.3.6") {
+        exclude(group = "com.google.crypto.tink", module = "tink")
+    }
+    implementation("com.google.crypto.tink:tink-android:1.24.0")
     implementation("com.google.mlkit:language-id:17.0.6")
     implementation("com.google.mlkit:translate:17.0.3")
 }

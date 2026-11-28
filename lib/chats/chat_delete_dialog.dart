@@ -1,5 +1,4 @@
 import 'package:flutter/widgets.dart';
-
 import '../components/app_confirm_dialog.dart';
 import '../components/app_interactive_surface.dart';
 import '../l10n/app_localizations.dart';

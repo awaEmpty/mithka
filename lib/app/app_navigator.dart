@@ -1,5 +1,4 @@
 import 'package:flutter/widgets.dart';
-
 import '../components/full_page_back_swipe.dart';
 import '../theme/app_motion.dart';
 
@@ -19,9 +18,24 @@ class AppChatPageRoute<T> extends PageRoute<T>
     super.settings,
     super.requestFocus,
     this.maintainState = true,
-  }) : super(allowSnapshotting: false);
+    this.contentSwap = false,
+    Duration? transitionDuration,
+    Duration? reverseTransitionDuration,
+  }) : _transitionDuration = transitionDuration ?? AppMotion.route,
+       _reverseTransitionDuration =
+           reverseTransitionDuration ?? AppMotion.routeReverse,
+       super(allowSnapshotting: false);
 
   final WidgetBuilder builder;
+
+  /// Whether this route swaps content in place (a topic switch inside one
+  /// chat) rather than opening a new conversation. A content swap fades in
+  /// over its sibling while the page underneath stays put, so the header and
+  /// tab strip never slide — only the transcript dissolves.
+  final bool contentSwap;
+
+  final Duration _transitionDuration;
+  final Duration _reverseTransitionDuration;
 
   @override
   final bool maintainState;
@@ -32,10 +46,10 @@ class AppChatPageRoute<T> extends PageRoute<T>
   bool _fullPageBackSwipeActive = false;
 
   @override
-  Duration get transitionDuration => AppMotion.route;
+  Duration get transitionDuration => _transitionDuration;
 
   @override
-  Duration get reverseTransitionDuration => AppMotion.routeReverse;
+  Duration get reverseTransitionDuration => _reverseTransitionDuration;
 
   @override
   Color? get barrierColor => null;
@@ -203,6 +217,16 @@ class AppChatPageRoute<T> extends PageRoute<T>
         _fullPageBackSwipeActive ||
         animation.status == AnimationStatus.reverse ||
         animation.status == AnimationStatus.dismissed;
+    if (contentSwap && !leaving) {
+      // A topic switch dissolves the transcript over its sibling; the header
+      // and tab strip are painted by both pages at the same coordinates, so a
+      // plain fade reads as if only the conversation changed. Leaving one
+      // (a back swipe to the chat list) keeps the ordinary slide.
+      return FadeTransition(
+        opacity: CurvedAnimation(parent: animation, curve: AppMotion.standard),
+        child: child,
+      );
+    }
     if (leaving) {
       final effectiveAnimation = popGestureInProgress
           ? animation

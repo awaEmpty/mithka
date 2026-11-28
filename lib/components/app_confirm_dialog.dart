@@ -1,5 +1,4 @@
 import 'package:flutter/widgets.dart';
-
 import '../l10n/app_localizations.dart';
 import '../theme/app_motion.dart';
 import '../theme/app_theme.dart';

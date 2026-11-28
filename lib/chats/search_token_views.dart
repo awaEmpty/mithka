@@ -8,7 +8,6 @@
 //
 
 import 'package:flutter/material.dart';
-
 import '../components/app_icons.dart';
 import '../components/app_interactive_surface.dart';
 import '../components/photo_avatar.dart';

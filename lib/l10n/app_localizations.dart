@@ -1,7 +1,6 @@
 import 'package:flutter/foundation.dart' show SynchronousFuture;
 import 'package:flutter/widgets.dart';
 import 'package:intl/intl.dart';
-
 import 'locale_catalogue.dart';
 
 class AppLocalizations {
@@ -116,6 +115,12 @@ extension AppLocalizationsContext on BuildContext {
 }
 
 abstract final class AppStringKeys {
+  static const autoDownloadChatTypesTitle = 'autoDownloadChatTypesTitle';
+  static const autoDownloadChatTypesDetail = 'autoDownloadChatTypesDetail';
+  static const autoDownloadChatContacts = 'autoDownloadChatContacts';
+  static const autoDownloadChatPrivate = 'autoDownloadChatPrivate';
+  static const autoDownloadChatGroups = 'autoDownloadChatGroups';
+  static const autoDownloadChatChannels = 'autoDownloadChatChannels';
   static const storageDownloadLocation = 'storageDownloadLocation';
   static const storageDownloadCacheLocation = 'storageDownloadCacheLocation';
   static const storageDownloadSaveFolder = 'storageDownloadSaveFolder';
@@ -133,27 +138,19 @@ abstract final class AppStringKeys {
   static const appIconBackgroundNeutral = 'appIconBackgroundNeutral';
   static const appIconBackgroundPinkPurple = 'appIconBackgroundPinkPurple';
   static const appIconBackgroundTelegramBlue = 'appIconBackgroundTelegramBlue';
-  static const appIconFreeCaption = 'appIconFreeCaption';
   static const appIconFreeHeading = 'appIconFreeHeading';
-  static const appIconFreeToday = 'appIconFreeToday';
   static const appIconLetterMNeutral = 'appIconLetterMNeutral';
   static const appIconLetterMPinkPurple = 'appIconLetterMPinkPurple';
   static const appIconLetterMTelegramBlue = 'appIconLetterMTelegramBlue';
-  static const appIconNextPenguin = 'appIconNextPenguin';
-  static const appIconPenguinCaption = 'appIconPenguinCaption';
   static const appIconPenguinHeading = 'appIconPenguinHeading';
   static const appIconPenguinNeutral = 'appIconPenguinNeutral';
   static const appIconPenguinPinkPurple = 'appIconPenguinPinkPurple';
-  static const appIconPenguinSupporterCaption =
-      'appIconPenguinSupporterCaption';
   static const appIconPenguinTelegramBlue = 'appIconPenguinTelegramBlue';
   static const appIconPixelPenguinNeutral = 'appIconPixelPenguinNeutral';
   static const appIconPixelPenguinPinkPurple = 'appIconPixelPenguinPinkPurple';
   static const appIconPixelPenguinTelegramBlue =
       'appIconPixelPenguinTelegramBlue';
-  static const appIconSelectedFreeToday = 'appIconSelectedFreeToday';
   static const appIconUse = 'appIconUse';
-  static const appIconUseHint = 'appIconUseHint';
 
   static const appIconCurrentHeading = 'appIconCurrentHeading';
   static const appIconCurrentNote = 'appIconCurrentNote';
@@ -251,10 +248,10 @@ abstract final class AppStringKeys {
   static const navigationBack = 'navigationBack';
   static const aboutReportProblem = 'aboutReportProblem';
   static const aboutReportProblemDetail = 'aboutReportProblemDetail';
+  static const aboutCommunityChat = 'aboutCommunityChat';
   static const aboutTelegramChannel = 'aboutTelegramChannel';
   static const aboutTitle = 'aboutTitle';
   static const aboutVersion = 'aboutVersion';
-  static const aboutWebsite = 'aboutWebsite';
   static const feedbackReportDescription = 'feedbackReportDescription';
   static const feedbackReportFailed = 'feedbackReportFailed';
   static const feedbackReportPlaceholder = 'feedbackReportPlaceholder';
@@ -353,7 +350,6 @@ abstract final class AppStringKeys {
   static const supporterBillingNoticeGoogle = 'supporterBillingNoticeGoogle';
   static const supporterCancellation = 'supporterCancellation';
   static const supporterFunctionalAccess = 'supporterFunctionalAccess';
-  static const supporterIconAccess = 'supporterIconAccess';
   static const supporterIconAccessibility = 'supporterIconAccessibility';
   static const supporterIconAvailable = 'supporterIconAvailable';
   static const supporterIconLockedHint = 'supporterIconLockedHint';
@@ -394,6 +390,89 @@ abstract final class AppStringKeys {
   static const mithkaProTerms = 'mithkaProTerms';
   static const mithkaProTitle = 'mithkaProTitle';
   static const mithkaProYearly = 'mithkaProYearly';
+
+  static const mithkaxAiReplyButton = 'mithkaxAiReplyButton';
+  static const mithkaxAiReplyButtonHint = 'mithkaxAiReplyButtonHint';
+  static const mithkaxAndroidShareFailed = 'mithkaxAndroidShareFailed';
+  static const mithkaxHapticsSection = 'mithkaxHapticsSection';
+  static const mithkaxHapticsTitle = 'mithkaxHapticsTitle';
+  static const mithkaxHapticsHint = 'mithkaxHapticsHint';
+  static const mithkaxIconHeading = 'mithkaxIconHeading';
+  static const mithkaxIconAurora = 'mithkaxIconAurora';
+  static const mithkaxIconAuroraNight = 'mithkaxIconAuroraNight';
+  static const mithkaxIconVerdant = 'mithkaxIconVerdant';
+  static const mithkaxIconVerdantNight = 'mithkaxIconVerdantNight';
+  static const mithkaxIconBlaze = 'mithkaxIconBlaze';
+  static const mithkaxIconBlazeNight = 'mithkaxIconBlazeNight';
+  static const mithkaxPushServiceTitle = 'mithkaxPushServiceTitle';
+  static const mithkaxPushServiceMode = 'mithkaxPushServiceMode';
+  static const mithkaxPushServiceInApp = 'mithkaxPushServiceInApp';
+  static const mithkaxPushServiceFcm = 'mithkaxPushServiceFcm';
+  static const mithkaxPushServiceUnified = 'mithkaxPushServiceUnified';
+  static const mithkaxPushServiceMicroG = 'mithkaxPushServiceMicroG';
+  static const mithkaxPushServiceInAppDescription =
+      'mithkaxPushServiceInAppDescription';
+  static const mithkaxPushServiceFcmDescription =
+      'mithkaxPushServiceFcmDescription';
+  static const mithkaxPushServiceUnifiedDescription =
+      'mithkaxPushServiceUnifiedDescription';
+  static const mithkaxPushServiceMicroGDescription =
+      'mithkaxPushServiceMicroGDescription';
+  static const mithkaxPushServiceResident = 'mithkaxPushServiceResident';
+  static const mithkaxPushServiceGateway = 'mithkaxPushServiceGateway';
+  static const mithkaxPushServiceDistributor = 'mithkaxPushServiceDistributor';
+  static const mithkaxPushServiceDistributorUnset =
+      'mithkaxPushServiceDistributorUnset';
+  static const mithkaxPushServiceStatus = 'mithkaxPushServiceStatus';
+  static const mithkaxPushServiceStatusRegistering =
+      'mithkaxPushServiceStatusRegistering';
+  static const mithkaxPushServiceStatusActive =
+      'mithkaxPushServiceStatusActive';
+  static const mithkaxPushServiceStatusFallback =
+      'mithkaxPushServiceStatusFallback';
+  static const mithkaxPushServiceStatusNoDistributor =
+      'mithkaxPushServiceStatusNoDistributor';
+  static const mithkaxPushServiceRetry = 'mithkaxPushServiceRetry';
+  static const mithkaxPushServiceStatusUnavailable =
+      'mithkaxPushServiceStatusUnavailable';
+  static const mithkaxPushServiceRestartNote = 'mithkaxPushServiceRestartNote';
+  static const mithkaxChannelBottomBar = 'mithkaxChannelBottomBar';
+  static const mithkaxChannelBottomBarMute = 'mithkaxChannelBottomBarMute';
+  static const mithkaxChannelBottomBarActions =
+      'mithkaxChannelBottomBarActions';
+  static const mithkaxChannelBottomBarHidden = 'mithkaxChannelBottomBarHidden';
+  static const mithkaxChannelBottomBarNote = 'mithkaxChannelBottomBarNote';
+  static const mithkaxChannelPanelDiscussion = 'mithkaxChannelPanelDiscussion';
+  static const mithkaxChannelPanelDirect = 'mithkaxChannelPanelDirect';
+  static const mithkaxChannelPostStats = 'mithkaxChannelPostStats';
+  static const mithkaxChannelPostViews = 'mithkaxChannelPostViews';
+  static const mithkaxChannelPostForwards = 'mithkaxChannelPostForwards';
+  static const mithkaxDeleteTopic = 'mithkaxDeleteTopic';
+  static const mithkaxReadAllFailed = 'mithkaxReadAllFailed';
+  static const mithkaxScheduledDeleteTitle = 'mithkaxScheduledDeleteTitle';
+  static const mithkaxScheduledDeleteEnable = 'mithkaxScheduledDeleteEnable';
+  static const mithkaxScheduledDeleteDescription =
+      'mithkaxScheduledDeleteDescription';
+  static const mithkaxScheduledDeleteDuration =
+      'mithkaxScheduledDeleteDuration';
+  static const mithkaxScheduledDeleteNote = 'mithkaxScheduledDeleteNote';
+  static const mithkaxScheduledDeleteOneHour = 'mithkaxScheduledDeleteOneHour';
+  static const mithkaxScheduledDeleteOneDay = 'mithkaxScheduledDeleteOneDay';
+  static const mithkaxScheduledDeleteThreeDays =
+      'mithkaxScheduledDeleteThreeDays';
+  static const mithkaxScheduledDeleteOneWeek = 'mithkaxScheduledDeleteOneWeek';
+  static const mithkaxScheduledDeleteOneMonth =
+      'mithkaxScheduledDeleteOneMonth';
+  static const mithkaxStickerSizeTitle = 'mithkaxStickerSizeTitle';
+  static const mithkaxStickerSizeNote = 'mithkaxStickerSizeNote';
+  static const mithkaxStickerSizeSmall = 'mithkaxStickerSizeSmall';
+  static const mithkaxStickerSizeLarge = 'mithkaxStickerSizeLarge';
+  static const mithkaxStickerSizeReset = 'mithkaxStickerSizeReset';
+  static const mithkaxTopicTabsDone = 'mithkaxTopicTabsDone';
+  static const mithkaxTopicTabsReorder = 'mithkaxTopicTabsReorder';
+  static const mithkaxTopicTabsMoveToBottom = 'mithkaxTopicTabsMoveToBottom';
+  static const mithkaxTopicTabsMoveToSide = 'mithkaxTopicTabsMoveToSide';
+  static const mithkaxTopicTabsMoveToTop = 'mithkaxTopicTabsMoveToTop';
   static const addMembersDone = 'addMembersDone';
   static const addMembersDoneWithCount = 'addMembersDoneWithCount';
   static const addMembersInviteMembersTitle = 'addMembersInviteMembersTitle';
@@ -411,7 +490,11 @@ abstract final class AppStringKeys {
   static const advancedInput = 'advancedInput';
   static const advancedNetwork = 'advancedNetwork';
   static const advancedTitle = 'advancedTitle';
+  static const advancedUnlimitedFavorites = 'advancedUnlimitedFavorites';
+  static const advancedUnlimitedFavoritesAbout =
+      'advancedUnlimitedFavoritesAbout';
   static const historyChatLabel = 'historyChatLabel';
+  static const historyChatNote = 'historyChatNote';
   static const historyClearedToast = 'historyClearedToast';
   static const historyClearAction = 'historyClearAction';
   static const historyClearAllConfirmTitle = 'historyClearAllConfirmTitle';
@@ -422,7 +505,7 @@ abstract final class AppStringKeys {
   static const historyEmpty = 'historyEmpty';
   static const historyExcludedNote = 'historyExcludedNote';
   static const historyExcludedTitle = 'historyExcludedTitle';
-  static const historyFilteredNote = 'historyFilteredNote';
+  static const historyFilterAll = 'historyFilterAll';
   static const historyKindAnimation = 'historyKindAnimation';
   static const historyKindAudio = 'historyKindAudio';
   static const historyKindContact = 'historyKindContact';
@@ -437,7 +520,10 @@ abstract final class AppStringKeys {
   static const historyKindVideoNote = 'historyKindVideoNote';
   static const historyKindVoice = 'historyKindVoice';
   static const historyNoExcludedChats = 'historyNoExcludedChats';
+  static const historyNoMatches = 'historyNoMatches';
+  static const historyOnlyNote = 'historyOnlyNote';
   static const historyReincludeAction = 'historyReincludeAction';
+  static const historySearchHint = 'historySearchHint';
   static const historySettingsRow = 'historySettingsRow';
   static const historyTitle = 'historyTitle';
   static const apiCredentialsCustomClientApi = 'apiCredentialsCustomClientApi';
@@ -504,6 +590,9 @@ abstract final class AppStringKeys {
   static const aiServerModelHint = 'aiServerModelHint';
   static const aiServerPrivacy = 'aiServerPrivacy';
   static const aiSettingsTitle = 'aiSettingsTitle';
+  static const aiShowComposerButton = 'aiShowComposerButton';
+  static const aiShowComposerButtonDescription =
+      'aiShowComposerButtonDescription';
   static const aiSummaryActions = 'aiSummaryActions';
   static const aiSummaryAssembling = 'aiSummaryAssembling';
   static const aiSummaryButton = 'aiSummaryButton';
@@ -573,6 +662,13 @@ abstract final class AppStringKeys {
   static const appearanceAddTextFont = 'appearanceAddTextFont';
   static const appearanceAlwaysShowMessageTime =
       'appearanceAlwaysShowMessageTime';
+  static const appearanceAvatarOnlineStatus = 'appearanceAvatarOnlineStatus';
+  static const appearanceAvatarOnlineStatusNote =
+      'appearanceAvatarOnlineStatusNote';
+  static const doubleTapActionNone = 'doubleTapActionNone';
+  static const doubleTapActionSendReaction = 'doubleTapActionSendReaction';
+  static const doubleTapIncoming = 'doubleTapIncoming';
+  static const doubleTapOutgoing = 'doubleTapOutgoing';
   static const appearanceAnimateAvatars = 'appearanceAnimateAvatars';
   static const appearanceAnimateStatusEmoji = 'appearanceAnimateStatusEmoji';
   static const appearanceAvatarsAndSidebar = 'appearanceAvatarsAndSidebar';
@@ -615,8 +711,6 @@ abstract final class AppStringKeys {
   static const appearanceGestures = 'appearanceGestures';
   static const appearanceDownloadFailed = 'appearanceDownloadFailed';
   static const appearanceEmojiFont = 'appearanceEmojiFont';
-  static const appearanceEmojiFontCatalogDescription =
-      'appearanceEmojiFontCatalogDescription';
   static const appearanceEnableTheming = 'appearanceEnableTheming';
   static const appearancePerAccountTheming = 'appearancePerAccountTheming';
   static const appearanceFileCount = 'appearanceFileCount';
@@ -671,6 +765,9 @@ abstract final class AppStringKeys {
   static const appearanceHidePhoneInSidebar = 'appearanceHidePhoneInSidebar';
   static const appearanceInterfaceSize = 'appearanceInterfaceSize';
   static const appearanceInUseSize = 'appearanceInUseSize';
+  static const appearanceLocalFonts = 'appearanceLocalFonts';
+  static const appearanceLocalFontsDescription =
+      'appearanceLocalFontsDescription';
   static const appearanceManage = 'appearanceManage';
   static const appearanceMergeConsecutiveImages =
       'appearanceMergeConsecutiveImages';
@@ -688,8 +785,13 @@ abstract final class AppStringKeys {
   static const appearanceNoCleanableFonts = 'appearanceNoCleanableFonts';
   static const appearanceNoDownloadedFontCache =
       'appearanceNoDownloadedFontCache';
+  static const appearanceNoLocalFonts = 'appearanceNoLocalFonts';
   static const appearanceNoMatchingFonts = 'appearanceNoMatchingFonts';
+  static const appearanceOnlineFonts = 'appearanceOnlineFonts';
+  static const appearanceOnlineFontsDescription =
+      'appearanceOnlineFontsDescription';
   static const appearanceRefreshCacheList = 'appearanceRefreshCacheList';
+  static const appearanceReloadFonts = 'appearanceReloadFonts';
   static const appearanceRoundGroupAvatars = 'appearanceRoundGroupAvatars';
   static const appearanceSearchFont = 'appearanceSearchFont';
   static const appearanceSenderNameBackground =
@@ -702,6 +804,9 @@ abstract final class AppStringKeys {
       'appearanceSenderNameReadabilityBlend';
   static const appearanceSenderNameReadabilityNone =
       'appearanceSenderNameReadabilityNone';
+  static const appearanceReplySenderStyle = 'appearanceReplySenderStyle';
+  static const appearanceReplySenderStyleNote =
+      'appearanceReplySenderStyleNote';
   static const appearanceShowChatListSearch = 'appearanceShowChatListSearch';
   static const appearanceShowEditAndReadMarks =
       'appearanceShowEditAndReadMarks';
@@ -760,6 +865,7 @@ abstract final class AppStringKeys {
   static const appLockAutoLock = 'appLockAutoLock';
   static const appLockAutoLockDescription = 'appLockAutoLockDescription';
   static const appLockAutoLockDisabled = 'appLockAutoLockDisabled';
+  static const appLockAutoLockImmediately = 'appLockAutoLockImmediately';
   static const appLockAutoLockOneMinute = 'appLockAutoLockOneMinute';
   static const appLockAutoLockFiveMinutes = 'appLockAutoLockFiveMinutes';
   static const appLockAutoLockOneHour = 'appLockAutoLockOneHour';
@@ -790,6 +896,7 @@ abstract final class AppStringKeys {
   static const appLockLockNow = 'appLockLockNow';
   static const appLockUnlockMethod = 'appLockUnlockMethod';
   static const appLockUnlockTitle = 'appLockUnlockTitle';
+  static const appLockUnlocked = 'appLockUnlocked';
   static const appLockUseBiometric = 'appLockUseBiometric';
   static const appLockVerifyTitle = 'appLockVerifyTitle';
   static const appLockWrongGesture = 'appLockWrongGesture';
@@ -934,7 +1041,9 @@ abstract final class AppStringKeys {
   static const chatActionWatchingAnimations = 'chatActionWatchingAnimations';
   static const chatAdminAnonymous = 'chatAdminAnonymous';
   static const chatAdminDeleteMessages = 'chatAdminDeleteMessages';
+  static const chatAdminManageChannel = 'chatAdminManageChannel';
   static const chatAdminManageChat = 'chatAdminManageChat';
+  static const chatAdminManageLiveStreams = 'chatAdminManageLiveStreams';
   static const chatAdminManageVideoChats = 'chatAdminManageVideoChats';
   static const chatAdminPermissionChangeInfoChannel =
       'chatAdminPermissionChangeInfoChannel';
@@ -972,6 +1081,8 @@ abstract final class AppStringKeys {
   static const chatButtonUnsupported = 'chatButtonUnsupported';
   static const chatCannotSendMessages = 'chatCannotSendMessages';
   static const chatContactCallsOnly = 'chatContactCallsOnly';
+  static const chatContextPaneHide = 'chatContextPaneHide';
+  static const chatContextPaneShow = 'chatContextPaneShow';
   static const chatFirstContactNotContact = 'chatFirstContactNotContact';
   static const chatFirstContactNotOfficial = 'chatFirstContactNotOfficial';
   static const chatFirstContactOfficial = 'chatFirstContactOfficial';
@@ -1010,13 +1121,23 @@ abstract final class AppStringKeys {
   static const chatEditPlainText = 'chatEditPlainText';
   static const chatForwardedToName = 'chatForwardedToName';
   static const chatForwardFailed = 'chatForwardFailed';
+  static const chatForwardPending = 'chatForwardPending';
+  static const chatForwardPendingCount = 'chatForwardPendingCount';
+  static const chatForwardPendingMore = 'chatForwardPendingMore';
+  static const chatForwardOptionsTitle = 'chatForwardOptionsTitle';
+  static const chatForwardChangeRecipient = 'chatForwardChangeRecipient';
   static const chatForwardProtected = 'chatForwardProtected';
   static const chatForwardRemoveCaption = 'chatForwardRemoveCaption';
   static const chatForwardRemoveSender = 'chatForwardRemoveSender';
+  static const chatForwardShowCaption = 'chatForwardShowCaption';
+  static const chatForwardShowSender = 'chatForwardShowSender';
+  static const chatReplyInAnotherChatTitle = 'chatReplyInAnotherChatTitle';
   static const chatForwardRenderMarkdown = 'chatForwardRenderMarkdown';
   static const chatForwardRenderMarkdownPremium =
       'chatForwardRenderMarkdownPremium';
   static const chatForwardToTitle = 'chatForwardToTitle';
+  static const chatGoToMessage = 'chatGoToMessage';
+  static const chatGoToMessageHint = 'chatGoToMessageHint';
   static const chatInfoAlbum = 'chatInfoAlbum';
   static const chatInfoAutoDeleteMessages = 'chatInfoAutoDeleteMessages';
   static const chatInfoAutoDeleteOff = 'chatInfoAutoDeleteOff';
@@ -1044,6 +1165,15 @@ abstract final class AppStringKeys {
   static const chatInfoFolderNameLabel = 'chatInfoFolderNameLabel';
   static const chatInfoGroupAlbum = 'chatInfoGroupAlbum';
   static const chatInfoGroupApps = 'chatInfoGroupApps';
+  static const chatInfoChannelChat = 'chatInfoChannelChat';
+  static const chatInfoChannelAlbum = 'chatInfoChannelAlbum';
+  static const chatInfoChannelAnnouncement = 'chatInfoChannelAnnouncement';
+  static const chatInfoChannelAnnouncementEmpty =
+      'chatInfoChannelAnnouncementEmpty';
+  static const chatInfoChannelApps = 'chatInfoChannelApps';
+  static const chatInfoChannelFiles = 'chatInfoChannelFiles';
+  static const chatInfoChannelRemark = 'chatInfoChannelRemark';
+  static const chatInfoChannelVideos = 'chatInfoChannelVideos';
   static const chatInfoGroupChat = 'chatInfoGroupChat';
   static const chatInfoGroupFiles = 'chatInfoGroupFiles';
   static const chatInfoGroupId = 'chatInfoGroupId';
@@ -1071,16 +1201,24 @@ abstract final class AppStringKeys {
   static const chatInfoPinLimit = 'chatInfoPinLimit';
   static const chatInfoPinLimitReachedError = 'chatInfoPinLimitReachedError';
   static const chatInfoPinnedHighlights = 'chatInfoPinnedHighlights';
+  static const chatPinAlsoFor = 'chatPinAlsoFor';
+  static const chatPinDialogMessage = 'chatPinDialogMessage';
+  static const chatPinDialogTitle = 'chatPinDialogTitle';
+  static const chatPinNotifyMembers = 'chatPinNotifyMembers';
   static const chatInfoRemove = 'chatInfoRemove';
   static const chatInfoSearchHistory = 'chatInfoSearchHistory';
   static const chatInfoTitle = 'chatInfoTitle';
   static const chatInlineSwitchButtonUnsupported =
       'chatInlineSwitchButtonUnsupported';
+  static const chatJoinChannel = 'chatJoinChannel';
   static const chatJoinGroup = 'chatJoinGroup';
   static const chatJoinRequestPending = 'chatJoinRequestPending';
   static const chatJoinRequestSent = 'chatJoinRequestSent';
   static const chatLeaveAndDeleteDescription = 'chatLeaveAndDeleteDescription';
   static const chatLeaveHistoryCleanupFailed = 'chatLeaveHistoryCleanupFailed';
+  static const chatLeaveHistoryCleanupFailedChannel =
+      'chatLeaveHistoryCleanupFailedChannel';
+  static const chatLinkedChannel = 'chatLinkedChannel';
   static const chatListAddFriendOrGroup = 'chatListAddFriendOrGroup';
   static const chatListBlockedPlaceholder = 'chatListBlockedPlaceholder';
   static const chatListChannelName = 'chatListChannelName';
@@ -1093,6 +1231,9 @@ abstract final class AppStringKeys {
   static const chatListLocalPinEnabled = 'chatListLocalPinEnabled';
   static const chatListLocalPinLimitReached = 'chatListLocalPinLimitReached';
   static const chatListMarkUnread = 'chatListMarkUnread';
+  static const chatListMarkAllRead = 'chatListMarkAllRead';
+  static const chatListSelectAll = 'chatListSelectAll';
+  static const chatListSelectedCountValue1 = 'chatListSelectedCountValue1';
   static const desktopChatOpenSeparate = 'desktopChatOpenSeparate';
   static const desktopChatWindowUnavailable = 'desktopChatWindowUnavailable';
   static const desktopWindowClose = 'desktopWindowClose';
@@ -1100,6 +1241,11 @@ abstract final class AppStringKeys {
   static const desktopWindowMinimize = 'desktopWindowMinimize';
   static const chatListNoChats = 'chatListNoChats';
   static const chatListScanQrCode = 'chatListScanQrCode';
+  static const chatListAddToFolder = 'chatListAddToFolder';
+  static const chatListBlockUser = 'chatListBlockUser';
+  static const chatListBlockUserDescription = 'chatListBlockUserDescription';
+  static const chatListBlockUserDone = 'chatListBlockUserDone';
+  static const chatListRemoveFromFolder = 'chatListRemoveFromFolder';
   static const chatListArchive = 'chatListArchive';
   static const chatListUnarchive = 'chatListUnarchive';
   static const chatListUnpin = 'chatListUnpin';
@@ -1121,6 +1267,8 @@ abstract final class AppStringKeys {
       'chatMembersRemoveFailedPermission';
   static const chatMembersRemoveMemberConfirmation =
       'chatMembersRemoveMemberConfirmation';
+  static const chatMembersRemoveMemberConfirmationChannel =
+      'chatMembersRemoveMemberConfirmationChannel';
   static const chatMembersRemoveMemberTitle = 'chatMembersRemoveMemberTitle';
   static const chatMembersRestrict = 'chatMembersRestrict';
   static const chatMembersRestrictApply = 'chatMembersRestrictApply';
@@ -1139,6 +1287,11 @@ abstract final class AppStringKeys {
   static const chatMessagesForwardedCount = 'chatMessagesForwardedCount';
   static const chatMessagesSavedCount = 'chatMessagesSavedCount';
   static const chatMoreActionsUnsupported = 'chatMoreActionsUnsupported';
+  static const chatMute = 'chatMute';
+  static const chatMuteFor1Hour = 'chatMuteFor1Hour';
+  static const chatMuteFor2Days = 'chatMuteFor2Days';
+  static const chatMuteFor8Hours = 'chatMuteFor8Hours';
+  static const chatMuteForever = 'chatMuteForever';
   static const chatNewMessagesCount = 'chatNewMessagesCount';
   static const chatNewMessagesDivider = 'chatNewMessagesDivider';
   static const chatUnreadMessagesCount = 'chatUnreadMessagesCount';
@@ -1164,6 +1317,8 @@ abstract final class AppStringKeys {
   static const chatRestrictedLeaveFailed = 'chatRestrictedLeaveFailed';
   static const chatRestrictedTelegramTosMessage =
       'chatRestrictedTelegramTosMessage';
+  static const chatRestrictedTelegramTosMessageChannel =
+      'chatRestrictedTelegramTosMessageChannel';
   static const chatRestrictedTitle = 'chatRestrictedTitle';
   static const chatSendFailedBlocked = 'chatSendFailedBlocked';
   static const chatSendFailedGeneric = 'chatSendFailedGeneric';
@@ -1246,6 +1401,7 @@ abstract final class AppStringKeys {
   static const chatThemeChoose = 'chatThemeChoose';
   static const chatThemeSaveFailed = 'chatThemeSaveFailed';
   static const chatThemeTitle = 'chatThemeTitle';
+  static const chatToBeginning = 'chatToBeginning';
   static const chatTodoSetFailed = 'chatTodoSetFailed';
   static const chatTodoSetSuccess = 'chatTodoSetSuccess';
   static const chatTodoUnsetFailed = 'chatTodoUnsetFailed';
@@ -1257,8 +1413,11 @@ abstract final class AppStringKeys {
   static const chatUnmute = 'chatUnmute';
   static const chatUserDoingAction = 'chatUserDoingAction';
   static const chatUserFallbackName = 'chatUserFallbackName';
-  static const chatUserLeftGroup = 'chatUserLeftGroup';
+  static const chatUserBoostedChannel = 'chatUserBoostedChannel';
   static const chatUserBoostedGroup = 'chatUserBoostedGroup';
+  static const chatUserLeftChannel = 'chatUserLeftChannel';
+  static const chatUserLeftGroup = 'chatUserLeftGroup';
+  static const chatUsersJoinedChannel = 'chatUsersJoinedChannel';
   static const chatUsersJoinedGroup = 'chatUsersJoinedGroup';
   static const chatUserTyping = 'chatUserTyping';
   static const chatVideoPlaceholder = 'chatVideoPlaceholder';
@@ -1305,6 +1464,7 @@ abstract final class AppStringKeys {
       'chatWallpaperThemesSharedWithChat';
   static const chatWallpaperTitle = 'chatWallpaperTitle';
   static const chatYouAreMuted = 'chatYouAreMuted';
+  static const chatYouWereRemovedFromChannel = 'chatYouWereRemovedFromChannel';
   static const chatYouWereRemovedFromGroup = 'chatYouWereRemovedFromGroup';
   static const checklistComposerAddTask = 'checklistComposerAddTask';
   static const checklistComposerNewChecklistTitle =
@@ -1319,9 +1479,13 @@ abstract final class AppStringKeys {
   static const cloudThemePreviewTitle = 'cloudThemePreviewTitle';
   static const communityChatAddedService = 'communityChatAddedService';
   static const communityChatAddedByService = 'communityChatAddedByService';
+  static const communityChatAddedByChannelService =
+      'communityChatAddedByChannelService';
   static const communityChatCount = 'communityChatCount';
   static const communityChatRemovedService = 'communityChatRemovedService';
   static const communityChatRemovedByService = 'communityChatRemovedByService';
+  static const communityChatRemovedByChannelService =
+      'communityChatRemovedByChannelService';
   static const communityChatsYouAreIn = 'communityChatsYouAreIn';
   static const communityChatsYouCanView = 'communityChatsYouCanView';
   static const communityEditAction = 'communityEditAction';
@@ -1396,6 +1560,29 @@ abstract final class AppStringKeys {
       'composerLongMessageRichTextPrompt';
   static const composerLongMessageTitle = 'composerLongMessageTitle';
   static const composerMarkdownSupportHint = 'composerMarkdownSupportHint';
+  static const composerLinkPreviewTitle = 'composerLinkPreviewTitle';
+  static const composerLinkPreviewAbove = 'composerLinkPreviewAbove';
+  static const composerLinkPreviewBelow = 'composerLinkPreviewBelow';
+  static const composerLinkPreviewOff = 'composerLinkPreviewOff';
+  static const composerLinkPreviewEnable = 'composerLinkPreviewEnable';
+  static const composerLinkPreviewDisable = 'composerLinkPreviewDisable';
+  static const composerReplyToName = 'composerReplyToName';
+  static const composerReplyToQuoteName = 'composerReplyToQuoteName';
+  static const composerReplyToExternalName = 'composerReplyToExternalName';
+  static const composerReplyOptionsTitle = 'composerReplyOptionsTitle';
+  static const composerReplyOptionsSubtitle = 'composerReplyOptionsSubtitle';
+  static const composerReplyOptionsUpdateTitle =
+      'composerReplyOptionsUpdateTitle';
+  static const composerReplyOptionsUpdateSubtitle =
+      'composerReplyOptionsUpdateSubtitle';
+  static const composerReplyOptionQuote = 'composerReplyOptionQuote';
+  static const composerReplyOptionAnotherChat =
+      'composerReplyOptionAnotherChat';
+  static const composerReplyOptionClearQuote = 'composerReplyOptionClearQuote';
+  static const composerReplyOptionApply = 'composerReplyOptionApply';
+  static const composerReplyOptionCancel = 'composerReplyOptionCancel';
+  static const composerReplyOptionsHint = 'composerReplyOptionsHint';
+  static const composerReplyTapHint = 'composerReplyTapHint';
   static const composerMessageExceedsRichTextLimit =
       'composerMessageExceedsRichTextLimit';
   static const composerMicrophonePermissionRequired =
@@ -1800,6 +1987,8 @@ abstract final class AppStringKeys {
   static const emojiCategorySymbols = 'emojiCategorySymbols';
   static const emojiCategoryTravelAndPlaces = 'emojiCategoryTravelAndPlaces';
   static const emojiFontCatalogSystemDefault = 'emojiFontCatalogSystemDefault';
+  static const emojiFontDownloaded = 'emojiFontDownloaded';
+  static const emojiFontNotDownloaded = 'emojiFontNotDownloaded';
   static const emojiPanelPreview = 'emojiPanelPreview';
   static const emojiPreviewFaceWithTearsOfJoy =
       'emojiPreviewFaceWithTearsOfJoy';
@@ -1972,12 +2161,24 @@ abstract final class AppStringKeys {
   static const groupManagementJoinBeforePosting =
       'groupManagementJoinBeforePosting';
   static const groupManagementJoinSection = 'groupManagementJoinSection';
+  static const groupManagementJoinSectionChannel =
+      'groupManagementJoinSectionChannel';
   static const groupManagementLoadFailed = 'groupManagementLoadFailed';
+  static const groupManagementLoadFailedChannel =
+      'groupManagementLoadFailedChannel';
   static const groupManagementLogAdmin = 'groupManagementLogAdmin';
   static const groupManagementLogApprovedJoinRequest =
       'groupManagementLogApprovedJoinRequest';
+  static const groupManagementLogApprovedJoinRequestChannel =
+      'groupManagementLogApprovedJoinRequestChannel';
   static const groupManagementLogChangedAdmin =
       'groupManagementLogChangedAdmin';
+  static const groupManagementLogChangedChannelDescription =
+      'groupManagementLogChangedChannelDescription';
+  static const groupManagementLogChangedChannelName =
+      'groupManagementLogChangedChannelName';
+  static const groupManagementLogChangedChannelPhoto =
+      'groupManagementLogChangedChannelPhoto';
   static const groupManagementLogChangedGroupDescription =
       'groupManagementLogChangedGroupDescription';
   static const groupManagementLogChangedGroupName =
@@ -2011,6 +2212,8 @@ abstract final class AppStringKeys {
       'groupManagementLogEditedMessage';
   static const groupManagementLogEditedTopic = 'groupManagementLogEditedTopic';
   static const groupManagementLogEmpty = 'groupManagementLogEmpty';
+  static const groupManagementLogEndedLiveStream =
+      'groupManagementLogEndedLiveStream';
   static const groupManagementLogEndedVideoChat =
       'groupManagementLogEndedVideoChat';
   static const groupManagementLogGenericAdminAction =
@@ -2020,16 +2223,23 @@ abstract final class AppStringKeys {
   static const groupManagementLogJoinedByInviteLink =
       'groupManagementLogJoinedByInviteLink';
   static const groupManagementLogJoinedGroup = 'groupManagementLogJoinedGroup';
+  static const groupManagementLogLeftChannel = 'groupManagementLogLeftChannel';
   static const groupManagementLogLeftGroup = 'groupManagementLogLeftGroup';
   static const groupManagementLogNoPermission =
       'groupManagementLogNoPermission';
+  static const groupManagementLogNoPermissionChannel =
+      'groupManagementLogNoPermissionChannel';
   static const groupManagementLogPinnedMessage =
       'groupManagementLogPinnedMessage';
   static const groupManagementLogRevokedInviteLink =
       'groupManagementLogRevokedInviteLink';
+  static const groupManagementLogStartedLiveStream =
+      'groupManagementLogStartedLiveStream';
   static const groupManagementLogStartedVideoChat =
       'groupManagementLogStartedVideoChat';
   static const groupManagementLogTitle = 'groupManagementLogTitle';
+  static const groupManagementLogTitleChannel =
+      'groupManagementLogTitleChannel';
   static const groupManagementLogUnknownActor =
       'groupManagementLogUnknownActor';
   static const groupManagementLogUnpinnedMessage =
@@ -2038,6 +2248,8 @@ abstract final class AppStringKeys {
   static const groupManagementMembersSection = 'groupManagementMembersSection';
   static const groupManagementNoEditInfoPermission =
       'groupManagementNoEditInfoPermission';
+  static const groupManagementNoEditInfoPermissionChannel =
+      'groupManagementNoEditInfoPermissionChannel';
   static const groupManagementNotSet = 'groupManagementNotSet';
   static const groupManagementPermissionCreateTopics =
       'groupManagementPermissionCreateTopics';
@@ -2101,6 +2313,18 @@ abstract final class AppStringKeys {
   static const imagePreviewTitle = 'imagePreviewTitle';
   static const imageEditTextTool = 'imageEditTextTool';
   static const imageEditTitle = 'imageEditTitle';
+  static const instantViewTitle = 'instantViewTitle';
+  static const instantViewTextSize = 'instantViewTextSize';
+  static const instantViewExtracting = 'instantViewExtracting';
+  static const instantViewOpenLocal = 'instantViewOpenLocal';
+  static const instantViewPreviousMatch = 'instantViewPreviousMatch';
+  static const instantViewNextMatch = 'instantViewNextMatch';
+  static const instantViewSearch = 'instantViewSearch';
+  static const instantViewOpenInBrowser = 'instantViewOpenInBrowser';
+  static const instantViewLoadFailed = 'instantViewLoadFailed';
+  static const instantViewShowMore = 'instantViewShowMore';
+  static const instantViewShowLess = 'instantViewShowLess';
+  static const instantViewRetry = 'instantViewRetry';
   static const keywordBlockerAddFromMessageTitle =
       'keywordBlockerAddFromMessageTitle';
   static const keywordBlockerDescription = 'keywordBlockerDescription';
@@ -2228,7 +2452,6 @@ abstract final class AppStringKeys {
   static const messageActionEdit = 'messageActionEdit';
   static const messageActionFavorite = 'messageActionFavorite';
   static const messageActionForward = 'messageActionForward';
-  static const messageActionInfo = 'messageActionInfo';
   static const messageActionMultiSelect = 'messageActionMultiSelect';
   static const messageActionPlayMuted = 'messageActionPlayMuted';
   static const messageActionQuote = 'messageActionQuote';
@@ -2298,23 +2521,6 @@ abstract final class AppStringKeys {
   static const messageBubblePreviewShort = 'messageBubblePreviewShort';
   static const messageBubbleStretchDescription =
       'messageBubbleStretchDescription';
-  static const messageInformationTitle = 'messageInformationTitle';
-  static const messageInfoForwards = 'messageInfoForwards';
-  static const messageInfoLoadFailed = 'messageInfoLoadFailed';
-  static const messageInfoRead = 'messageInfoRead';
-  static const messageInfoReadDateHidden = 'messageInfoReadDateHidden';
-  static const messageInfoReadDatePrivate = 'messageInfoReadDatePrivate';
-  static const messageInfoReadDateTooOld = 'messageInfoReadDateTooOld';
-  static const messageInfoReadDateUnavailable =
-      'messageInfoReadDateUnavailable';
-  static const messageInfoSender = 'messageInfoSender';
-  static const messageInfoSent = 'messageInfoSent';
-  static const messageInfoText = 'messageInfoText';
-  static const messageInfoType = 'messageInfoType';
-  static const messageInfoUnknownViewer = 'messageInfoUnknownViewer';
-  static const messageInfoUnread = 'messageInfoUnread';
-  static const messageInfoViewers = 'messageInfoViewers';
-  static const messageInfoViews = 'messageInfoViews';
   static const messageBubbleCollapse = 'messageBubbleCollapse';
   static const messageBubbleExpandQuote = 'messageBubbleExpandQuote';
   static const messageBubbleForwardedFrom = 'messageBubbleForwardedFrom';
@@ -2530,8 +2736,11 @@ abstract final class AppStringKeys {
   static const notificationTopFive = 'notificationTopFive';
   static const notificationTopFiveDescription =
       'notificationTopFiveDescription';
+  static const pinnedMessagesCountTitle = 'pinnedMessagesCountTitle';
   static const pinnedMessagesEmpty = 'pinnedMessagesEmpty';
+  static const pinnedMessagesHide = 'pinnedMessagesHide';
   static const pinnedMessagesSentBy = 'pinnedMessagesSentBy';
+  static const pinnedMessagesUnpinAll = 'pinnedMessagesUnpinAll';
   static const pollComposerAddOption = 'pollComposerAddOption';
   static const pollComposerCreatePollTitle = 'pollComposerCreatePollTitle';
   static const pollComposerOptionLabel = 'pollComposerOptionLabel';
@@ -2919,6 +3128,13 @@ abstract final class AppStringKeys {
   static const sensitiveContentUnblockMessage =
       'sensitiveContentUnblockMessage';
   static const sensitiveContentUnblockTitle = 'sensitiveContentUnblockTitle';
+  static const searchHistoryClearAction = 'searchHistoryClearAction';
+  static const searchHistoryClearMessage = 'searchHistoryClearMessage';
+  static const searchHistoryClearTitle = 'searchHistoryClearTitle';
+  static const searchHistoryRemoveAction = 'searchHistoryRemoveAction';
+  static const searchHistoryRemoveMessage = 'searchHistoryRemoveMessage';
+  static const searchHistoryRemoveTitle = 'searchHistoryRemoveTitle';
+  static const searchRecent = 'searchRecent';
   static const searchTabChats = 'searchTabChats';
   static const searchTokenFromTitle = 'searchTokenFromTitle';
   static const searchTokenHasExample = 'searchTokenHasExample';
@@ -3262,14 +3478,26 @@ abstract final class AppStringKeys {
   /// Counted: the bare duration (card second line; the title names Premium).
   static const giftDurationMonths = 'giftDurationMonths';
   static const giftDurationDays = 'giftDurationDays';
+  static const tdMessageBoostedChannel = 'tdMessageBoostedChannel';
+  static const tdMessageChannelCreated = 'tdMessageChannelCreated';
+  static const tdMessageChannelNameChanged = 'tdMessageChannelNameChanged';
+  static const tdMessageChannelPhotoDeleted = 'tdMessageChannelPhotoDeleted';
+  static const tdMessageChannelPhotoUpdated = 'tdMessageChannelPhotoUpdated';
+  static const tdMessageChannelVideoChatEnded =
+      'tdMessageChannelVideoChatEnded';
+  static const tdMessageChannelVideoChatStarted =
+      'tdMessageChannelVideoChatStarted';
   static const tdMessageGroupCreated = 'tdMessageGroupCreated';
   static const tdMessageGroupNameChanged = 'tdMessageGroupNameChanged';
   static const tdMessageGroupPhotoDeleted = 'tdMessageGroupPhotoDeleted';
   static const tdMessageGroupPhotoUpdated = 'tdMessageGroupPhotoUpdated';
+  static const tdMessageGroupUpgraded = 'tdMessageGroupUpgraded';
   static const tdMessageGroupVideoChatEnded = 'tdMessageGroupVideoChatEnded';
   static const tdMessageGroupVideoChatStarted =
       'tdMessageGroupVideoChatStarted';
   static const tdMessageHoursDuration = 'tdMessageHoursDuration';
+  static const tdMessageJoinedChannel = 'tdMessageJoinedChannel';
+  static const tdMessageJoinedChannelByLink = 'tdMessageJoinedChannelByLink';
   static const tdMessageJoinedGroupByLink = 'tdMessageJoinedGroupByLink';
   static const tdMessageLastSeenMonthDay = 'tdMessageLastSeenMonthDay';
   static const tdMessageLastSeenTodayTime = 'tdMessageLastSeenTodayTime';
@@ -3277,10 +3505,13 @@ abstract final class AppStringKeys {
   static const tdMessageLastSeenYearMonthDay = 'tdMessageLastSeenYearMonthDay';
   static const tdMessageLastSeenYesterdayTime =
       'tdMessageLastSeenYesterdayTime';
+  static const tdMessageMemberLeftChannel = 'tdMessageMemberLeftChannel';
   static const tdMessageMemberLeftGroup = 'tdMessageMemberLeftGroup';
   static const tdMessageMessagePinned = 'tdMessageMessagePinned';
   static const tdMessageMinutesDuration = 'tdMessageMinutesDuration';
   static const tdMessageMusic = 'tdMessageMusic';
+  static const tdMessageNewMemberJoinedChannel =
+      'tdMessageNewMemberJoinedChannel';
   static const tdMessageNewMemberJoinedGroup = 'tdMessageNewMemberJoinedGroup';
   static const tdMessageNoAudio = 'tdMessageNoAudio';
   static const tdMessageNoFiles = 'tdMessageNoFiles';
@@ -3298,6 +3529,10 @@ abstract final class AppStringKeys {
   static const tdMessagePhotoVideo = 'tdMessagePhotoVideo';
   static const tdMessagePoll = 'tdMessagePoll';
   static const tdMessageProduct = 'tdMessageProduct';
+  static const tdMessageProtectedContentDisabled =
+      'tdMessageProtectedContentDisabled';
+  static const tdMessageProtectedContentEnabled =
+      'tdMessageProtectedContentEnabled';
   static const tdMessageSecondsDuration = 'tdMessageSecondsDuration';
   static const tdMessageSticker = 'tdMessageSticker';
   static const tdMessageStickerPreview = 'tdMessageStickerPreview';
@@ -3469,7 +3704,6 @@ abstract final class AppStringKeys {
   static const updateAction = 'updateAction';
   static const updateDownloadingTitle = 'updateDownloadingTitle';
   static const updateInstallAction = 'updateInstallAction';
-  static const updateInstallPrompt = 'updateInstallPrompt';
   static const updateLater = 'updateLater';
   static const updateManagedInstall = 'updateManagedInstall';
   static const updateNewVersionFound = 'updateNewVersionFound';
@@ -3479,7 +3713,6 @@ abstract final class AppStringKeys {
   static const updateStageExtracting = 'updateStageExtracting';
   static const updateStageStaging = 'updateStageStaging';
   static const updateStageVerifying = 'updateStageVerifying';
-  static const updateVersionPrompt = 'updateVersionPrompt';
   static const videoPlaybackFinishedAsk = 'videoPlaybackFinishedAsk';
   static const videoPlaybackFinishedAutoplayNext =
       'videoPlaybackFinishedAutoplayNext';
@@ -3537,7 +3770,6 @@ abstract final class AppStringKeys {
   static const videoPlayerUseSystemOrientation =
       'videoPlayerUseSystemOrientation';
   static const videoPlayerWaitingForFile = 'videoPlayerWaitingForFile';
-  static const vipBadgeLabel = 'vipBadgeLabel';
   static const blockingBlocklist = 'blockingBlocklist';
   static const blockingCountry = 'blockingCountry';
   static const blockingCountryDescription = 'blockingCountryDescription';
@@ -3555,6 +3787,10 @@ abstract final class AppStringKeys {
   static const blockingTitle = 'blockingTitle';
   static const messagePollVotes = 'messagePollVotes';
   static const messageLinkCopied = 'messageLinkCopied';
+  static const messageLinkCopyEmail = 'messageLinkCopyEmail';
+  static const messageLinkCopyHashtag = 'messageLinkCopyHashtag';
+  static const messageLinkCopyUsername = 'messageLinkCopyUsername';
+  static const messageLinkShareQr = 'messageLinkShareQr';
   static const messagePollClosed = 'messagePollClosed';
   static const messagePollStop = 'messagePollStop';
   static const messagePollStopConfirm = 'messagePollStopConfirm';
@@ -3867,6 +4103,8 @@ abstract final class AppStringKeys {
   static const chatAdministratorEditTransferOwnership =
       'chatAdministratorEditTransferOwnership';
   static const chatFolderManagementAllChats = 'chatFolderManagementAllChats';
+  static const chatFolderManagementDeleteFolder =
+      'chatFolderManagementDeleteFolder';
   static const chatFolderManagementDeleteThisInviteLink =
       'chatFolderManagementDeleteThisInviteLink';
   static const chatFolderManagementFolderInviteLinks =
@@ -4051,6 +4289,7 @@ abstract final class AppStringKeys {
       'loginTelegramPremiumIsRequired';
   static const loginTelegramRequiresAnEmailAddressToFinishSigning =
       'loginTelegramRequiresAnEmailAddressToFinishSigning';
+  static const mediaFavorites = 'mediaFavorites';
   static const mediaMetadataBitrate = 'mediaMetadataBitrate';
   static const mediaMetadataCodec = 'mediaMetadataCodec';
   static const mediaMetadataDuration = 'mediaMetadataDuration';
@@ -4069,6 +4308,16 @@ abstract final class AppStringKeys {
       'mediaSendPreviewVideoPresentation';
   static const mediaSendPreviewVideoTrimRange =
       'mediaSendPreviewVideoTrimRange';
+  static const mediaTileSend = 'mediaTileSend';
+  static const mediaTileSendWithoutSound = 'mediaTileSendWithoutSound';
+  static const mediaTileSchedule = 'mediaTileSchedule';
+  static const mediaTileAddToFavorites = 'mediaTileAddToFavorites';
+  static const mediaTileRemoveFromFavorites = 'mediaTileRemoveFromFavorites';
+  static const mediaTileViewStickerSet = 'mediaTileViewStickerSet';
+  static const mediaTileSaveToGallery = 'mediaTileSaveToGallery';
+  static const mediaTileSaveToFile = 'mediaTileSaveToFile';
+  static const mediaTileCopySticker = 'mediaTileCopySticker';
+  static const mediaTileDeleteFromRecent = 'mediaTileDeleteFromRecent';
   static const messageBubbleAISummary = 'messageBubbleAISummary';
   static const messageBubbleSummarize = 'messageBubbleSummarize';
   static const messageBubbleSummarizingPrivatelyWithTelegram =
@@ -4750,6 +4999,9 @@ abstract final class AppStringKeys {
   static const presenceLastSeenWithinWeek = 'presenceLastSeenWithinWeek';
   static const presenceLastSeenWithinMonth = 'presenceLastSeenWithinMonth';
   static const aboutCheckForUpdates = 'aboutCheckForUpdates';
+  static const aboutUpdatePrereleases = 'aboutUpdatePrereleases';
+  static const aboutUpdatePrereleasesDetail = 'aboutUpdatePrereleasesDetail';
+
   static const aboutCheckingForUpdates = 'aboutCheckingForUpdates';
   static const aboutUpToDate = 'aboutUpToDate';
   static const aboutUpdateAvailable = 'aboutUpdateAvailable';
@@ -5248,8 +5500,6 @@ abstract final class AppStringKeys {
       'storyAuthoringLiveAlreadyActive';
   static const storyAuthoringPostingUnavailable =
       'storyAuthoringPostingUnavailable';
-  static const publicDiscoverySimilarToValue1 =
-      'publicDiscoverySimilarToValue1';
   static const publicDiscoveryPostSearchLimitReached =
       'publicDiscoveryPostSearchLimitReached';
   static const publicDiscoverySearchChannelsAndBots =
@@ -5266,9 +5516,6 @@ abstract final class AppStringKeys {
   static const publicDiscoveryRecommendedChannels =
       'publicDiscoveryRecommendedChannels';
   static const publicDiscoveryBotsSection = 'publicDiscoveryBotsSection';
-  static const publicDiscoveryLoading = 'publicDiscoveryLoading';
-  static const publicDiscoveryNoSimilarResults =
-      'publicDiscoveryNoSimilarResults';
   static const publicDiscoveryPostSearchHint = 'publicDiscoveryPostSearchHint';
   static const publicDiscoveryNoPublicPostsFound =
       'publicDiscoveryNoPublicPostsFound';
@@ -5305,6 +5552,79 @@ abstract final class AppStringKeys {
       'storyAuthoringAreaUpgradedGift';
   static const profilePhotoBadgeCurrent = 'profilePhotoBadgeCurrent';
   static const profilePhotoBadgePublic = 'profilePhotoBadgePublic';
+  static const channelBottomBar = 'channelBottomBar';
+  static const channelBottomBarHidden = 'channelBottomBarHidden';
+  static const channelBottomBarMute = 'channelBottomBarMute';
+  static const channelBottomBarNote = 'channelBottomBarNote';
+  static const channelDeleteTopic = 'channelDeleteTopic';
+  static const channelMarkAllReadFailed = 'channelMarkAllReadFailed';
+  static const channelPanelDirect = 'channelPanelDirect';
+  static const channelPanelDiscussion = 'channelPanelDiscussion';
+  static const channelPostForwards = 'channelPostForwards';
+  static const channelPostStats = 'channelPostStats';
+  static const channelPostViews = 'channelPostViews';
+  static const chatInfoKeepRecording = 'chatInfoKeepRecording';
+  static const chatInfoStopRecordingConfirmMessage =
+      'chatInfoStopRecordingConfirmMessage';
+  static const chatInfoStopRecordingConfirmTitle =
+      'chatInfoStopRecordingConfirmTitle';
+  static const ghostModeShowSidebarEntry = 'ghostModeShowSidebarEntry';
+  static const ghostModeShowSidebarEntryDescription =
+      'ghostModeShowSidebarEntryDescription';
+  static const historyBadgeStyleBoth = 'historyBadgeStyleBoth';
+  static const historyBadgeStyleIcon = 'historyBadgeStyleIcon';
+  static const historyBadgeStyleText = 'historyBadgeStyleText';
+  static const historyBadgeStyleTitle = 'historyBadgeStyleTitle';
+  static const settingsResetDatabase = 'settingsResetDatabase';
+  static const settingsResetDatabaseMessage = 'settingsResetDatabaseMessage';
+  static const settingsResetDatabaseDone = 'settingsResetDatabaseDone';
+  static const historyClearDatabase = 'historyClearDatabase';
+  static const historyClearDatabaseMessage = 'historyClearDatabaseMessage';
+  static const historyDatabaseClearedToast = 'historyDatabaseClearedToast';
+  static const historyEnableAll = 'historyEnableAll';
+  static const historyExportAction = 'historyExportAction';
+  static const historyExportSubtitle = 'historyExportSubtitle';
+  static const historyExportedToast = 'historyExportedToast';
+  static const historyImportAction = 'historyImportAction';
+  static const historyImportConfirmMessage = 'historyImportConfirmMessage';
+  static const historyImportConfirmTitle = 'historyImportConfirmTitle';
+  static const historyImportFailedToast = 'historyImportFailedToast';
+  static const historyImportSubtitle = 'historyImportSubtitle';
+  static const historyImportedToast = 'historyImportedToast';
+  static const historyRecordBots = 'historyRecordBots';
+  static const historyRecordChannels = 'historyRecordChannels';
+  static const historyRecordDeleted = 'historyRecordDeleted';
+  static const historyRecordEdits = 'historyRecordEdits';
+  static const historyRecordGroups = 'historyRecordGroups';
+  static const historyRecordNote = 'historyRecordNote';
+  static const historyRecordPrivate = 'historyRecordPrivate';
+  static const historyRecordSection = 'historyRecordSection';
+  static const historyRemoveFromMirrorAction = 'historyRemoveFromMirrorAction';
+  static const historyRemovedFromMirrorToast = 'historyRemovedFromMirrorToast';
+  static const historyRenderGhosts = 'historyRenderGhosts';
+  static const historyRenderGhostsNote = 'historyRenderGhostsNote';
+  static const historyRevisionsTitle = 'historyRevisionsTitle';
+  static const historySenderLabel = 'historySenderLabel';
+  static const historySnapshotChannels = 'historySnapshotChannels';
+  static const historySnapshotGroups = 'historySnapshotGroups';
+  static const historySnapshotNote = 'historySnapshotNote';
+  static const historySnapshotPrivate = 'historySnapshotPrivate';
+  static const historySnapshotSection = 'historySnapshotSection';
+  static const historyTransferNote = 'historyTransferNote';
+  static const historyTransferSection = 'historyTransferSection';
+  static const historyTransferTitle = 'historyTransferTitle';
+  static const keptForwardCopyPartToast = 'keptForwardCopyPartToast';
+  static const keptForwardProtected = 'keptForwardProtected';
+  static const keptForwardProtectedHint = 'keptForwardProtectedHint';
+  static const keptForwardSection = 'keptForwardSection';
+  static const keptGhostSection = 'keptGhostSection';
+  static const keptHistorySection = 'keptHistorySection';
+  static const keptPremiumSection = 'keptPremiumSection';
+  static const keptSettingsTitle = 'keptSettingsTitle';
+  static const localPremiumNote = 'localPremiumNote';
+  static const localPremiumTitle = 'localPremiumTitle';
+  static const messageActionViewEdits = 'messageActionViewEdits';
+  static const channelBottomBarActions = 'channelBottomBarActions';
 }
 
 abstract final class AppStrings {

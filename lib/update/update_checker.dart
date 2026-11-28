@@ -17,18 +17,17 @@
 //
 
 import 'dart:io';
-
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 import 'package:mithka/l10n/app_localizations.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
-
 import '../app/app_version.dart';
-import '../components/confirm_dialog.dart';
 import '../tdlib/td_client.dart';
 import 'desktop_updater.dart';
 import 'release_feed.dart';
 import 'update_progress_dialog.dart';
+import 'update_prompt_dialog.dart';
 
 /// What a manual check from About found.
 ///
@@ -40,6 +39,11 @@ class UpdateChecker {
   UpdateChecker._();
 
   static const _isGooglePlayBuild = bool.fromEnvironment('GOOGLE_PLAY_BUILD');
+
+  /// About's "check pre-release builds" switch. Off means the update check
+  /// only follows official releases; the reference client ships the same
+  /// choice as an opt-in.
+  static const includePrereleasesKey = 'update.includePrereleases.v1';
   static const _channel = MethodChannel('mithka/app_info');
   static bool _checkedThisLaunch = false;
 
@@ -102,7 +106,9 @@ class UpdateChecker {
     final current = await _installedVersion();
     if (current.isEmpty) return UpdateCheckOutcome.unavailable;
 
-    final release = await fetchLatestRelease();
+    final release = await fetchLatestRelease(
+      includePrereleases: await _includePrereleases(),
+    );
     if (release == null) return UpdateCheckOutcome.unavailable;
     if (compareReleaseVersions(release.version, current) <= 0) {
       return UpdateCheckOutcome.upToDate;
@@ -113,6 +119,15 @@ class UpdateChecker {
       return _offerAndroidApk(context, release, current);
     }
     return _offerDesktopPackage(context, release, current, unasked: unasked);
+  }
+
+  static Future<bool> _includePrereleases() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      return prefs.getBool(includePrereleasesKey) ?? false;
+    } catch (_) {
+      return false;
+    }
   }
 
   /// The running build's version, from the Android host or package metadata.
@@ -142,15 +157,12 @@ class UpdateChecker {
     if (url == null) return UpdateCheckOutcome.unavailable;
     if (!context.mounted) return UpdateCheckOutcome.updateAvailable;
 
-    final ok = await confirmDialog(
+    final ok = await showUpdatePromptDialog(
       context,
       title: AppStrings.t(AppStringKeys.updateNewVersionFound),
-      message: AppStrings.t(AppStringKeys.updateVersionPrompt, {
-        'value1': current,
-        'value2': release.version,
-      }),
+      current: current,
+      latest: release.version,
       confirmText: AppStrings.t(AppStringKeys.updateAction),
-      cancelText: AppStrings.t(AppStringKeys.updateLater),
     );
     if (ok && context.mounted) {
       await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
@@ -184,15 +196,12 @@ class UpdateChecker {
       return UpdateCheckOutcome.updateAvailable;
     }
 
-    final ok = await confirmDialog(
+    final ok = await showUpdatePromptDialog(
       context,
       title: AppStrings.t(AppStringKeys.updateNewVersionFound),
-      message: AppStrings.t(AppStringKeys.updateInstallPrompt, {
-        'value1': current,
-        'value2': release.version,
-      }),
+      current: current,
+      latest: release.version,
       confirmText: AppStrings.t(AppStringKeys.updateInstallAction),
-      cancelText: AppStrings.t(AppStringKeys.updateLater),
     );
     if (!ok || !context.mounted) return UpdateCheckOutcome.updateAvailable;
 
@@ -228,18 +237,15 @@ class UpdateChecker {
     String current,
     DesktopUpdateBlock? block,
   ) async {
-    final message = block == DesktopUpdateBlock.managedInstall
-        ? AppStrings.t(AppStringKeys.updateManagedInstall)
-        : AppStrings.t(AppStringKeys.updateVersionPrompt, {
-            'value1': current,
-            'value2': release.version,
-          });
-    final ok = await confirmDialog(
+    final ok = await showUpdatePromptDialog(
       context,
       title: AppStrings.t(AppStringKeys.updateNewVersionFound),
-      message: message,
+      current: current,
+      latest: release.version,
+      note: block == DesktopUpdateBlock.managedInstall
+          ? AppStrings.t(AppStringKeys.updateManagedInstall)
+          : null,
       confirmText: AppStrings.t(AppStringKeys.updateOpenReleasePage),
-      cancelText: AppStrings.t(AppStringKeys.updateLater),
     );
     if (ok) {
       await launchUrl(

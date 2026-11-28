@@ -2,8 +2,7 @@ import 'package:flutter/material.dart' show Theme;
 import 'package:flutter/widgets.dart';
 import 'package:mithka/l10n/app_localizations.dart';
 import 'package:provider/provider.dart';
-
-import '../chat/chat_wallpaper.dart';
+import '../chat/appearance/chat_wallpaper.dart';
 import '../components/app_confirm_dialog.dart';
 import '../components/ui_components.dart';
 import 'app_theme.dart';

@@ -7,10 +7,8 @@
 //
 
 import 'dart:convert';
-
 import 'package:mithka/l10n/app_localizations.dart';
 import 'package:mithka/l10n/gram_amount.dart';
-
 import 'json_helpers.dart';
 
 /// Where a transfer stands, as the envelope and the detail sheet show it.

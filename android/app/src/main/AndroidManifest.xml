@@ -11,6 +11,9 @@
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <!-- Keep media playback alive while the screen is off/backgrounded. -->
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!-- UI haptics go straight to the Vibrator (see HapticsPlugin.kt): the
+         system touch-vibration switch only gates performHapticFeedback. -->
+    <uses-permission android:name="android.permission.VIBRATE" />
     <!-- In-call audio routing (earpiece / speaker / Bluetooth) for ntgcalls -->
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
     <!-- Camera capture (image_picker) -->
@@ -40,15 +43,27 @@
     <!-- Keeps music playback alive while the app is backgrounded. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+    <!-- In-app push mode and the UnifiedPush fallback hold a Telegram socket
+         from a foreground service, and restart it after a reboot. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_REMOTE_MESSAGING" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 
     <application
-        android:label="Mithka"
-        android:name="${applicationName}"
-        android:icon="@mipmap/ic_launcher"
+        android:label="Mithka X"
+        android:icon="@mipmap/ic_launcher_mithkax_default"
+        android:theme="@style/LaunchTheme"
         android:allowBackup="true"
         android:fullBackupContent="@xml/backup_rules"
         android:dataExtractionRules="@xml/data_extraction_rules"
         android:networkSecurityConfig="@xml/network_security_config">
+        <!-- The launch theme must ALSO live at the application level: cold
+             starts launched through an activity-alias (i.e. every launcher
+             entry after an icon switch) resolve the starting window's theme
+             from the ALIAS, which falls back to the application theme — the
+             target activity's android:theme is never consulted on that path.
+             Without this, Android 12+ shows the platform default splash,
+             which is the current launcher icon. -->
+
         <service
             android:name="com.gurfdev.light_compressor_v2.CompressionForegroundService"
             tools:node="remove" />
@@ -65,6 +80,28 @@
             android:name=".MediaPlaybackService"
             android:exported="false"
             android:foregroundServiceType="mediaPlayback" />
+        <!-- Keeps the TDLib connection alive for the in-app push mode and as
+             the UnifiedPush fallback. -->
+        <service
+            android:name=".PushKeepAliveService"
+            android:exported="false"
+            android:foregroundServiceType="remoteMessaging" />
+        <!-- UnifiedPush distributor callbacks. The connector starts this
+             service by explicit intent, including from a cold process. -->
+        <service
+            android:name=".MithkaUnifiedPushService"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="org.unifiedpush.android.connector.PUSH_EVENT" />
+            </intent-filter>
+        </service>
+        <receiver
+            android:name=".PushBootReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+            </intent-filter>
+        </receiver>
         <meta-data
             android:name="io.sentry.dsn"
             android:value="${sentryDsn}" />
@@ -158,10 +195,10 @@
         </activity>
         <activity-alias
             android:name=".MainActivityDefault"
-            android:enabled="true"
+            android:enabled="false"
             android:exported="true"
             android:icon="@mipmap/ic_launcher"
-            android:label="Mithka"
+            android:label="Mithka X"
             android:targetActivity=".MainActivity">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN"/>
@@ -173,7 +210,7 @@
             android:enabled="false"
             android:exported="true"
             android:icon="@mipmap/ic_launcher_white"
-            android:label="Mithka"
+            android:label="Mithka X"
             android:targetActivity=".MainActivity">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN"/>
@@ -185,7 +222,7 @@
             android:enabled="false"
             android:exported="true"
             android:icon="@mipmap/ic_launcher_blue"
-            android:label="Mithka"
+            android:label="Mithka X"
             android:targetActivity=".MainActivity">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN"/>
@@ -197,7 +234,7 @@
             android:enabled="false"
             android:exported="true"
             android:icon="@mipmap/ic_launcher_purple"
-            android:label="Mithka"
+            android:label="Mithka X"
             android:targetActivity=".MainActivity">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN"/>
@@ -209,7 +246,7 @@
             android:enabled="false"
             android:exported="true"
             android:icon="@mipmap/ic_launcher_pixel"
-            android:label="Mithka"
+            android:label="Mithka X"
             android:targetActivity=".MainActivity">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN"/>
@@ -221,7 +258,7 @@
             android:enabled="false"
             android:exported="true"
             android:icon="@mipmap/ic_launcher_aurora"
-            android:label="Mithka"
+            android:label="Mithka X"
             android:targetActivity=".MainActivity">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN"/>
@@ -233,7 +270,7 @@
             android:enabled="false"
             android:exported="true"
             android:icon="@mipmap/ic_launcher_prism"
-            android:label="Mithka"
+            android:label="Mithka X"
             android:targetActivity=".MainActivity">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN"/>
@@ -245,7 +282,7 @@
             android:enabled="false"
             android:exported="true"
             android:icon="@mipmap/ic_launcher_signal"
-            android:label="Mithka"
+            android:label="Mithka X"
             android:targetActivity=".MainActivity">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN"/>
@@ -257,7 +294,7 @@
             android:enabled="false"
             android:exported="true"
             android:icon="@mipmap/ic_launcher_pilot"
-            android:label="Mithka"
+            android:label="Mithka X"
             android:targetActivity=".MainActivity">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN"/>
@@ -269,7 +306,7 @@
             android:enabled="false"
             android:exported="true"
             android:icon="@mipmap/ic_launcher_headphones"
-            android:label="Mithka"
+            android:label="Mithka X"
             android:targetActivity=".MainActivity">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN"/>
@@ -281,7 +318,7 @@
             android:enabled="false"
             android:exported="true"
             android:icon="@mipmap/ic_launcher_winter"
-            android:label="Mithka"
+            android:label="Mithka X"
             android:targetActivity=".MainActivity">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN"/>
@@ -293,7 +330,7 @@
             android:enabled="false"
             android:exported="true"
             android:icon="@mipmap/ic_launcher_astronaut"
-            android:label="Mithka"
+            android:label="Mithka X"
             android:targetActivity=".MainActivity">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN"/>
@@ -305,7 +342,7 @@
             android:enabled="false"
             android:exported="true"
             android:icon="@mipmap/ic_launcher_crown"
-            android:label="Mithka"
+            android:label="Mithka X"
             android:targetActivity=".MainActivity">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN"/>
@@ -317,7 +354,7 @@
             android:enabled="false"
             android:exported="true"
             android:icon="@mipmap/ic_launcher_party"
-            android:label="Mithka"
+            android:label="Mithka X"
             android:targetActivity=".MainActivity">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN"/>
@@ -329,7 +366,7 @@
             android:enabled="false"
             android:exported="true"
             android:icon="@mipmap/ic_launcher_sleepy"
-            android:label="Mithka"
+            android:label="Mithka X"
             android:targetActivity=".MainActivity">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN"/>
@@ -341,7 +378,7 @@
             android:enabled="false"
             android:exported="true"
             android:icon="@mipmap/ic_launcher_heart"
-            android:label="Mithka"
+            android:label="Mithka X"
             android:targetActivity=".MainActivity">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN"/>
@@ -353,7 +390,7 @@
             android:enabled="false"
             android:exported="true"
             android:icon="@mipmap/ic_launcher_coffee"
-            android:label="Mithka"
+            android:label="Mithka X"
             android:targetActivity=".MainActivity">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN"/>
@@ -365,7 +402,7 @@
             android:enabled="false"
             android:exported="true"
             android:icon="@mipmap/ic_launcher_detective"
-            android:label="Mithka"
+            android:label="Mithka X"
             android:targetActivity=".MainActivity">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN"/>
@@ -377,7 +414,7 @@
             android:enabled="false"
             android:exported="true"
             android:icon="@mipmap/ic_launcher_gamer"
-            android:label="Mithka"
+            android:label="Mithka X"
             android:targetActivity=".MainActivity">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN"/>
@@ -389,7 +426,7 @@
             android:enabled="false"
             android:exported="true"
             android:icon="@mipmap/ic_launcher_fishing"
-            android:label="Mithka"
+            android:label="Mithka X"
             android:targetActivity=".MainActivity">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN"/>
@@ -406,7 +443,7 @@
             android:enabled="false"
             android:exported="true"
             android:icon="@mipmap/ic_launcher_skateboard"
-            android:label="Mithka"
+            android:label="Mithka X"
             android:targetActivity=".MainActivity">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN"/>
@@ -418,7 +455,7 @@
             android:enabled="false"
             android:exported="true"
             android:icon="@mipmap/ic_launcher_surfboard"
-            android:label="Mithka"
+            android:label="Mithka X"
             android:targetActivity=".MainActivity">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN"/>
@@ -430,7 +467,7 @@
             android:enabled="false"
             android:exported="true"
             android:icon="@mipmap/ic_launcher_basketball"
-            android:label="Mithka"
+            android:label="Mithka X"
             android:targetActivity=".MainActivity">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN"/>
@@ -442,7 +479,7 @@
             android:enabled="false"
             android:exported="true"
             android:icon="@mipmap/ic_launcher_football"
-            android:label="Mithka"
+            android:label="Mithka X"
             android:targetActivity=".MainActivity">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN"/>
@@ -454,7 +491,7 @@
             android:enabled="false"
             android:exported="true"
             android:icon="@mipmap/ic_launcher_tennis"
-            android:label="Mithka"
+            android:label="Mithka X"
             android:targetActivity=".MainActivity">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN"/>
@@ -466,7 +503,7 @@
             android:enabled="false"
             android:exported="true"
             android:icon="@mipmap/ic_launcher_skiing"
-            android:label="Mithka"
+            android:label="Mithka X"
             android:targetActivity=".MainActivity">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN"/>
@@ -478,7 +515,7 @@
             android:enabled="false"
             android:exported="true"
             android:icon="@mipmap/ic_launcher_painter"
-            android:label="Mithka"
+            android:label="Mithka X"
             android:targetActivity=".MainActivity">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN"/>
@@ -490,7 +527,7 @@
             android:enabled="false"
             android:exported="true"
             android:icon="@mipmap/ic_launcher_guitar"
-            android:label="Mithka"
+            android:label="Mithka X"
             android:targetActivity=".MainActivity">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN"/>
@@ -502,7 +539,7 @@
             android:enabled="false"
             android:exported="true"
             android:icon="@mipmap/ic_launcher_drummer"
-            android:label="Mithka"
+            android:label="Mithka X"
             android:targetActivity=".MainActivity">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN"/>
@@ -514,7 +551,7 @@
             android:enabled="false"
             android:exported="true"
             android:icon="@mipmap/ic_launcher_photographer"
-            android:label="Mithka"
+            android:label="Mithka X"
             android:targetActivity=".MainActivity">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN"/>
@@ -526,7 +563,7 @@
             android:enabled="false"
             android:exported="true"
             android:icon="@mipmap/ic_launcher_magician"
-            android:label="Mithka"
+            android:label="Mithka X"
             android:targetActivity=".MainActivity">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN"/>
@@ -538,7 +575,7 @@
             android:enabled="false"
             android:exported="true"
             android:icon="@mipmap/ic_launcher_chef"
-            android:label="Mithka"
+            android:label="Mithka X"
             android:targetActivity=".MainActivity">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN"/>
@@ -550,7 +587,7 @@
             android:enabled="false"
             android:exported="true"
             android:icon="@mipmap/ic_launcher_reader"
-            android:label="Mithka"
+            android:label="Mithka X"
             android:targetActivity=".MainActivity">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN"/>
@@ -562,7 +599,7 @@
             android:enabled="false"
             android:exported="true"
             android:icon="@mipmap/ic_launcher_scientist"
-            android:label="Mithka"
+            android:label="Mithka X"
             android:targetActivity=".MainActivity">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN"/>
@@ -574,7 +611,7 @@
             android:enabled="false"
             android:exported="true"
             android:icon="@mipmap/ic_launcher_gardener"
-            android:label="Mithka"
+            android:label="Mithka X"
             android:targetActivity=".MainActivity">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN"/>
@@ -586,7 +623,7 @@
             android:enabled="false"
             android:exported="true"
             android:icon="@mipmap/ic_launcher_mail_carrier"
-            android:label="Mithka"
+            android:label="Mithka X"
             android:targetActivity=".MainActivity">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN"/>
@@ -598,7 +635,7 @@
             android:enabled="false"
             android:exported="true"
             android:icon="@mipmap/ic_launcher_pirate"
-            android:label="Mithka"
+            android:label="Mithka X"
             android:targetActivity=".MainActivity">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN"/>
@@ -610,7 +647,7 @@
             android:enabled="false"
             android:exported="true"
             android:icon="@mipmap/ic_launcher_dragon"
-            android:label="Mithka"
+            android:label="Mithka X"
             android:targetActivity=".MainActivity">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN"/>
@@ -622,7 +659,7 @@
             android:enabled="false"
             android:exported="true"
             android:icon="@mipmap/ic_launcher_bubblegum"
-            android:label="Mithka"
+            android:label="Mithka X"
             android:targetActivity=".MainActivity">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN"/>
@@ -634,7 +671,7 @@
             android:enabled="false"
             android:exported="true"
             android:icon="@mipmap/ic_launcher_raincoat"
-            android:label="Mithka"
+            android:label="Mithka X"
             android:targetActivity=".MainActivity">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN"/>
@@ -646,7 +683,7 @@
             android:enabled="false"
             android:exported="true"
             android:icon="@mipmap/ic_launcher_noodles"
-            android:label="Mithka"
+            android:label="Mithka X"
             android:targetActivity=".MainActivity">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN"/>
@@ -658,7 +695,7 @@
             android:enabled="false"
             android:exported="true"
             android:icon="@mipmap/ic_launcher_ice_cream"
-            android:label="Mithka"
+            android:label="Mithka X"
             android:targetActivity=".MainActivity">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN"/>
@@ -670,7 +707,7 @@
             android:enabled="false"
             android:exported="true"
             android:icon="@mipmap/ic_launcher_sunflower"
-            android:label="Mithka"
+            android:label="Mithka X"
             android:targetActivity=".MainActivity">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN"/>
@@ -682,7 +719,7 @@
             android:enabled="false"
             android:exported="true"
             android:icon="@mipmap/ic_launcher_ninja"
-            android:label="Mithka"
+            android:label="Mithka X"
             android:targetActivity=".MainActivity">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN"/>
@@ -694,7 +731,7 @@
             android:enabled="false"
             android:exported="true"
             android:icon="@mipmap/ic_launcher_high_five"
-            android:label="Mithka"
+            android:label="Mithka X"
             android:targetActivity=".MainActivity">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN"/>
@@ -706,7 +743,7 @@
             android:enabled="false"
             android:exported="true"
             android:icon="@mipmap/ic_launcher_hug"
-            android:label="Mithka"
+            android:label="Mithka X"
             android:targetActivity=".MainActivity">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN"/>
@@ -718,7 +755,7 @@
             android:enabled="false"
             android:exported="true"
             android:icon="@mipmap/ic_launcher_seesaw"
-            android:label="Mithka"
+            android:label="Mithka X"
             android:targetActivity=".MainActivity">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN"/>
@@ -730,7 +767,7 @@
             android:enabled="false"
             android:exported="true"
             android:icon="@mipmap/ic_launcher_dance"
-            android:label="Mithka"
+            android:label="Mithka X"
             android:targetActivity=".MainActivity">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN"/>
@@ -742,7 +779,7 @@
             android:enabled="false"
             android:exported="true"
             android:icon="@mipmap/ic_launcher_pillow_fight"
-            android:label="Mithka"
+            android:label="Mithka X"
             android:targetActivity=".MainActivity">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN"/>
@@ -754,7 +791,7 @@
             android:enabled="false"
             android:exported="true"
             android:icon="@mipmap/ic_launcher_snowball"
-            android:label="Mithka"
+            android:label="Mithka X"
             android:targetActivity=".MainActivity">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN"/>
@@ -766,7 +803,7 @@
             android:enabled="false"
             android:exported="true"
             android:icon="@mipmap/ic_launcher_parade"
-            android:label="Mithka"
+            android:label="Mithka X"
             android:targetActivity=".MainActivity">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN"/>
@@ -778,7 +815,7 @@
             android:enabled="false"
             android:exported="true"
             android:icon="@mipmap/ic_launcher_choir"
-            android:label="Mithka"
+            android:label="Mithka X"
             android:targetActivity=".MainActivity">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN"/>
@@ -790,7 +827,7 @@
             android:enabled="false"
             android:exported="true"
             android:icon="@mipmap/ic_launcher_stack"
-            android:label="Mithka"
+            android:label="Mithka X"
             android:targetActivity=".MainActivity">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN"/>
@@ -802,7 +839,7 @@
             android:enabled="false"
             android:exported="true"
             android:icon="@mipmap/ic_launcher_picnic"
-            android:label="Mithka"
+            android:label="Mithka X"
             android:targetActivity=".MainActivity">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN"/>
@@ -814,7 +851,7 @@
             android:enabled="false"
             android:exported="true"
             android:icon="@mipmap/ic_launcher_paper_planes"
-            android:label="Mithka"
+            android:label="Mithka X"
             android:targetActivity=".MainActivity">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN"/>
@@ -826,7 +863,7 @@
             android:enabled="false"
             android:exported="true"
             android:icon="@mipmap/ic_launcher_stargazing"
-            android:label="Mithka"
+            android:label="Mithka X"
             android:targetActivity=".MainActivity">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN"/>
@@ -838,7 +875,7 @@
             android:enabled="false"
             android:exported="true"
             android:icon="@mipmap/ic_launcher_pixel_neutral"
-            android:label="Mithka"
+            android:label="Mithka X"
             android:targetActivity=".MainActivity">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN"/>
@@ -850,19 +887,47 @@
             android:enabled="false"
             android:exported="true"
             android:icon="@mipmap/ic_launcher_pixel_gradient"
-            android:label="Mithka"
+            android:label="Mithka X"
             android:targetActivity=".MainActivity">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN"/>
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
         </activity-alias>
+        <!-- The manifest-enabled primordial alias. Its COMPONENT NAME is
+             historical (it shipped the neutral letter mark first) and must not
+             be renamed: an update that swaps an enabled component's name for a
+             new enabled one drops a second home-screen icon beside every user
+             whose explicit choice lives in package restrictions. The artwork
+             it carries is the Mithka X default mark; the neutral letter mark
+             is now a regular alternative (MainActivityLetterMNeutralAlt). -->
         <activity-alias
             android:name=".MainActivityLetterMNeutral"
+            android:enabled="true"
+            android:exported="true"
+            android:icon="@mipmap/ic_launcher_mithkax_default"
+            android:label="Mithka X"
+            android:targetActivity=".MainActivity">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN"/>
+                <category android:name="android.intent.category.LAUNCHER"/>
+            </intent-filter>
+        </activity-alias>
+        <!-- Same letter-m_neutral art, but shipped DISABLED like every other
+             alternative: re-selecting the shipped default then routes through
+             this clone, whose manifest state is disabled, so de-selecting it
+             later is a STATE_DEFAULT transition that Android does not treat
+             as "the launcher component went away" (which force-closes the
+             task). Only the very first switch away from the manifest-enabled
+             alias ever closes the app — the same trick Discord/Twitter use.
+             Never enable both letter-m aliases at once: two home-screen
+             icons would appear. -->
+        <activity-alias
+            android:name=".MainActivityLetterMNeutralAlt"
             android:enabled="false"
             android:exported="true"
             android:icon="@mipmap/ic_launcher_letter_m_neutral"
-            android:label="Mithka"
+            android:label="Mithka X"
             android:targetActivity=".MainActivity">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN"/>
@@ -874,7 +939,83 @@
             android:enabled="false"
             android:exported="true"
             android:icon="@mipmap/ic_launcher_letter_m_gradient"
-            android:label="Mithka"
+            android:label="Mithka X"
+            android:targetActivity=".MainActivity">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN"/>
+                <category android:name="android.intent.category.LAUNCHER"/>
+            </intent-filter>
+        </activity-alias>
+        <!-- Mithka X default mark. Re-selecting it routes through this clone so
+             leaving it again is a STATE_DEFAULT transition (see the letter-m
+             clone above); the manifest-enabled primordial alias above carries
+             the same artwork. -->
+        <activity-alias
+            android:name=".MainActivityMithkaXDefaultAlt"
+            android:enabled="false"
+            android:exported="true"
+            android:icon="@mipmap/ic_launcher_mithkax_default"
+            android:label="Mithka X"
+            android:targetActivity=".MainActivity">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN"/>
+                <category android:name="android.intent.category.LAUNCHER"/>
+            </intent-filter>
+        </activity-alias>
+        <activity-alias
+            android:name=".MainActivityMithkaXGreen"
+            android:enabled="false"
+            android:exported="true"
+            android:icon="@mipmap/ic_launcher_mithkax_green"
+            android:label="Mithka X"
+            android:targetActivity=".MainActivity">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN"/>
+                <category android:name="android.intent.category.LAUNCHER"/>
+            </intent-filter>
+        </activity-alias>
+        <activity-alias
+            android:name=".MainActivityMithkaXFlame"
+            android:enabled="false"
+            android:exported="true"
+            android:icon="@mipmap/ic_launcher_mithkax_flame"
+            android:label="Mithka X"
+            android:targetActivity=".MainActivity">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN"/>
+                <category android:name="android.intent.category.LAUNCHER"/>
+            </intent-filter>
+        </activity-alias>
+        <activity-alias
+            android:name=".MainActivityMithkaXDefaultNight"
+            android:enabled="false"
+            android:exported="true"
+            android:icon="@mipmap/ic_launcher_mithkax_default_night"
+            android:label="Mithka X"
+            android:targetActivity=".MainActivity">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN"/>
+                <category android:name="android.intent.category.LAUNCHER"/>
+            </intent-filter>
+        </activity-alias>
+        <activity-alias
+            android:name=".MainActivityMithkaXGreenNight"
+            android:enabled="false"
+            android:exported="true"
+            android:icon="@mipmap/ic_launcher_mithkax_green_night"
+            android:label="Mithka X"
+            android:targetActivity=".MainActivity">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN"/>
+                <category android:name="android.intent.category.LAUNCHER"/>
+            </intent-filter>
+        </activity-alias>
+        <activity-alias
+            android:name=".MainActivityMithkaXFlameNight"
+            android:enabled="false"
+            android:exported="true"
+            android:icon="@mipmap/ic_launcher_mithkax_flame_night"
+            android:label="Mithka X"
             android:targetActivity=".MainActivity">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN"/>

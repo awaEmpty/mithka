@@ -1,8 +1,6 @@
 import 'dart:async';
-
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
-
 import '../theme/app_motion.dart';
 import '../theme/app_theme.dart';
 

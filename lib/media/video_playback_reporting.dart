@@ -1,11 +1,10 @@
 import 'dart:async';
 
-import 'package:f_videoplayer/f_videoplayer.dart';
+import 'package:cineplay/cineplay.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:sentry_flutter/sentry_flutter.dart';
 import 'package:video_player/video_player.dart';
-
 import '../app/telemetry_config.dart';
 
 enum VideoPlaybackLocation { player, desktopWindow, inline, sticker, story }

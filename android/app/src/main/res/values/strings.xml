@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Mithka X</string>
+    <string name="push_keepalive_channel">Background connection</string>
+    <string name="push_keepalive_channel_quiet">Background connection (silent)</string>
+    <string name="push_keepalive_title">Mithka X</string>
+    <string name="push_keepalive_text">Keeping the Telegram connection open</string>
+    <string name="push_fallback_channel">Messages</string>
+    <string name="push_fallback_new_message">New message</string>
+    <string name="push_fallback_photo">Photo</string>
+    <string name="push_fallback_video">Video</string>
+    <string name="push_fallback_voice">Voice message</string>
+    <string name="push_fallback_audio">Audio</string>
+    <string name="push_fallback_sticker">Sticker</string>
+    <string name="push_fallback_gif">GIF</string>
+    <string name="push_fallback_file">File</string>
+    <string name="push_fallback_location">Location</string>
+    <string name="push_fallback_contact">Contact</string>
+    <string name="push_fallback_poll">Poll</string>
+    <string name="push_fallback_gift">Gift</string>
+</resources>

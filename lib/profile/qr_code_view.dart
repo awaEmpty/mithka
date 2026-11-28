@@ -11,7 +11,6 @@ import 'package:flutter/material.dart';
 import 'package:mithka/l10n/app_localizations.dart';
 import 'package:provider/provider.dart';
 import 'package:qr_flutter/qr_flutter.dart';
-
 import '../components/photo_avatar.dart';
 import '../components/ui_components.dart';
 import '../tdlib/json_helpers.dart';
